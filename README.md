@@ -101,3 +101,4 @@ Responses include both `_id` and `id` on records. Auth accepts Bearer header, `t
 - SQLite is fine for local/dev; for production traffic prefer PostgreSQL (swap driver + DSN in `database.Open`).
 # ecom-gotth
 # ecom-gotth
+# ecom-gotth
