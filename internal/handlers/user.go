@@ -67,7 +67,7 @@ func (a *API) syncUserRoles(userID string, roleNames []string) error {
 	_, _ = a.DB.Exec(`DELETE FROM "UserRole" WHERE userId = ?`, userID)
 	seen := map[string]struct{}{}
 	for _, name := range roleNames {
-		name = strings.TrimSpace(name)
+		name = strings.ToLower(strings.TrimSpace(name))
 		if name == "" {
 			continue
 		}
@@ -132,45 +132,101 @@ func jsonUnmarshal(s string, v any) error {
 	return json.Unmarshal([]byte(s), v)
 }
 
+func (a *API) emailTaken(email, exceptID string) bool {
+	var id string
+	err := a.DB.QueryRow(`SELECT id FROM "User" WHERE lower(email) = lower(?)`, email).Scan(&id)
+	return err == nil && id != exceptID
+}
+
+// RegisterUser creates a user account. Public callers can only ever create a
+// plain active "user": role and active fields supplied by an anonymous client
+// are ignored. An authenticated admin or manager may assign roles.
 func (a *API) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	body, err := a.decodeBody(r)
 	if err != nil {
 		response.Fail(w, "invalid body")
 		return
 	}
+	actorID := a.userIDFromRequest(r, body)
+	// Only an authenticated, active administrator may assign roles or create a
+	// disabled account. A manager can create ordinary users but cannot mint
+	// elevated accounts.
+	canAssignRoles := false
+	if actorID != "" {
+		var exists int
+		if a.DB.QueryRow(`SELECT 1 FROM "User" WHERE id = ? AND active = 1`, actorID).Scan(&exists) == nil {
+			canAssignRoles = hasRole(a.userRoles(actorID), "admin")
+		}
+	}
+
+	name := strings.TrimSpace(str(body, "name"))
+	email := strings.TrimSpace(str(body, "email"))
 	password := str(body, "password")
+	if name == "" || email == "" || password == "" {
+		response.Fail(w, "Please fill all required fields")
+		return
+	}
+	if !validEmail(email) {
+		response.Fail(w, "Please provide a valid email address")
+		return
+	}
 	if password != str(body, "confirmPassword") {
 		response.Fail(w, "Passwords do not match")
 		return
 	}
+	if err := validatePassword(password); err != nil {
+		response.Fail(w, err.Error())
+		return
+	}
+	if a.emailTaken(email, "") {
+		response.Fail(w, "Email already registered")
+		return
+	}
+
 	photo, _ := upload.SaveImage(r, "photo", filepath.Join(a.Cfg.UploadsDir, "Users"), "userphoto")
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
+
+	roles := []string{"user"}
+	active := true
+	if canAssignRoles {
+		if supplied := normalizeRoles(body["roles"]); len(supplied) > 0 {
+			roles = supplied
+		}
+		if _, ok := body["active"]; ok {
+			active = boolVal(body, "active", true)
+		}
+	}
+
 	id := models.NewID()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err = a.DB.Exec(`INSERT INTO "User" (id, name, email, password, photo, active, createdAt, updatedAt)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, str(body, "name"), str(body, "email"), hash, photo, boolVal(body, "active", true), now, now)
+		id, name, email, hash, photo, active, now, now)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
-	_ = a.syncUserRoles(id, normalizeRoles(body["roles"]))
+	if err := a.syncUserRoles(id, roles); err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	response.Success(w, "User added successfully", map[string]any{"user": a.serializeUser(id)})
 }
 
 func (a *API) LoginUser(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
-	email, password := str(body, "email"), str(body, "password")
+	email, password := strings.TrimSpace(str(body, "email")), str(body, "password")
 	if email == "" || password == "" {
 		response.Fail(w, "Please fill all required fields")
 		return
 	}
 	var id, hash string
-	err := a.DB.QueryRow(`SELECT id, password FROM "User" WHERE email = ?`, email).Scan(&id, &hash)
+	var active int
+	err := a.DB.QueryRow(`SELECT id, password, active FROM "User" WHERE email = ?`, email).Scan(&id, &hash, &active)
 	if err == sql.ErrNoRows {
 		response.Fail(w, "User not found")
 		return
@@ -179,25 +235,25 @@ func (a *API) LoginUser(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, "Invalid credentials")
 		return
 	}
-	token, err := auth.GenerateToken(a.Cfg.JWTSecret, id, a.Cfg.TokenTTL)
+	if active == 0 {
+		response.Fail(w, "Account is disabled")
+		return
+	}
+	roles := a.userRoles(id)
+	primaryRole := ""
+	if len(roles) > 0 {
+		primaryRole = roles[0]
+	}
+	token, err := auth.GenerateTokenWithClaims(a.Cfg.JWTSecret, id, auth.KindUser, primaryRole, a.Cfg.TokenTTL)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteNoneMode,
-		Secure:   true,
-		Expires:  time.Now().Add(a.Cfg.TokenTTL),
-	})
+	a.setAuthCookie(w, token)
 	user := a.serializeUser(id)
-	roles, _ := user["roles"].([]string)
 	var role any
-	if len(roles) > 0 {
-		role = roles[0]
+	if primaryRole != "" {
+		role = primaryRole
 	}
 	response.OK(w, map[string]any{
 		"success": true,
@@ -209,20 +265,12 @@ func (a *API) LoginUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) LogoutUser(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: "", Path: "/", HttpOnly: true, Expires: time.Unix(0, 0)})
+	clearAuthCookie(w)
 	response.OK(w, map[string]any{"message": "Successfully logged out"})
 }
 
 func (a *API) GetLoggedInUser(w http.ResponseWriter, r *http.Request) {
 	id := middleware.UserIDFromContext(r.Context())
-	if id == "" {
-		body, _ := a.decodeBody(r)
-		if t := tokenFromBody(body); t != "" {
-			if c, err := auth.ParseToken(a.Cfg.JWTSecret, t); err == nil {
-				id = c.ID
-			}
-		}
-	}
 	if id == "" {
 		response.Fail(w, "Not authorized")
 		return
@@ -235,11 +283,17 @@ func (a *API) GetLoggedInUser(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"success": true, "user": user})
 }
 
+// GetSpecificUser allows a user to read their own record. Managers and admins
+// may read any user.
 func (a *API) GetSpecificUser(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, _ := a.requestInput(r)
 	id := str(body, "id")
 	if id == "" {
 		id = chi.URLParam(r, "id")
+	}
+	if !a.canAccessUser(r, id) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
 	}
 	user := a.serializeUser(id)
 	if user == nil {
@@ -250,18 +304,27 @@ func (a *API) GetSpecificUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) LoginStatus(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, _ := a.requestInput(r)
 	token := tokenFromBody(body)
+	if token == "" {
+		token = middleware.TokenFromRequest(r)
+	}
 	if token == "" {
 		response.OK(w, map[string]any{"success": false})
 		return
 	}
-	_, err := auth.ParseToken(a.Cfg.JWTSecret, token)
-	response.OK(w, map[string]any{"success": err == nil})
+	claims, err := auth.ParseToken(a.Cfg.JWTSecret, token)
+	if err != nil || (claims.Kind != "" && claims.Kind != auth.KindUser) {
+		response.OK(w, map[string]any{"success": false})
+		return
+	}
+	response.OK(w, map[string]any{"success": true})
 }
 
 func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.Query(`SELECT id FROM "User" ORDER BY createdAt DESC`)
+	body, _ := a.requestInput(r)
+	limit, offset := pagination(body)
+	rows, err := a.DB.Query(`SELECT id FROM "User" ORDER BY createdAt DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -282,24 +345,63 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"users": users})
 }
 
+// UpdateUser lets a user edit their own profile. Only administrators may
+// change roles or the active flag, and nobody can grant themselves a role.
 func (a *API) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
 	id := str(body, "id")
 	if id == "" {
-		id = middleware.UserIDFromContext(r.Context())
+		id = chi.URLParam(r, "id")
 	}
+	actorID := middleware.UserIDFromContext(r.Context())
 	if id == "" {
-		response.Fail(w, "User id required")
+		id = actorID
+	}
+	if !a.canAccessUser(r, id) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
 		return
 	}
+	var exists int
+	if err := a.DB.QueryRow(`SELECT 1 FROM "User" WHERE id = ?`, id).Scan(&exists); err != nil {
+		response.Fail(w, "User not found")
+		return
+	}
+
+	// Validate privilege changes before writing anything so a rejected request
+	// cannot leave a partially updated profile behind.
+	_, activeProvided := body["active"]
+	_, rolesProvided := body["roles"]
+	if activeProvided || rolesProvided {
+		if !a.isAdmin(r) {
+			response.FailStatus(w, http.StatusForbidden, "Forbidden")
+			return
+		}
+	}
+	if rolesProvided && id == actorID {
+		response.FailStatus(w, http.StatusForbidden, "You cannot change your own roles")
+		return
+	}
+	if activeProvided && id == actorID && !boolVal(body, "active", true) {
+		response.FailStatus(w, http.StatusForbidden, "You cannot deactivate your own account")
+		return
+	}
+
 	photo, err := upload.SaveImage(r, "photo", filepath.Join(a.Cfg.UploadsDir, "Users"), "userphoto")
 	sets := []string{}
 	args := []any{}
-	if name := str(body, "name"); name != "" {
+	if name := strings.TrimSpace(str(body, "name")); name != "" {
 		sets = append(sets, "name = ?")
 		args = append(args, name)
 	}
-	if email := str(body, "email"); email != "" {
+	if email := strings.TrimSpace(str(body, "email")); email != "" {
+		if !validEmail(email) {
+			response.Fail(w, "Please provide a valid email address")
+			return
+		}
+		if a.emailTaken(email, id) {
+			response.Fail(w, "Email already registered")
+			return
+		}
 		sets = append(sets, "email = ?")
 		args = append(args, email)
 	}
@@ -307,31 +409,34 @@ func (a *API) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		sets = append(sets, "photo = ?")
 		args = append(args, photo)
 	}
-	if _, ok := body["active"]; ok {
+	if activeProvided {
 		sets = append(sets, "active = ?")
 		args = append(args, boolVal(body, "active", true))
 	}
 	sets = append(sets, "updatedAt = ?")
 	args = append(args, time.Now().UTC().Format(time.RFC3339Nano))
 	args = append(args, id)
-	if len(sets) > 1 {
-		_, err = a.DB.Exec(`UPDATE "User" SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
-		if err != nil {
+	if _, err = a.DB.Exec(`UPDATE "User" SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	if rolesProvided {
+		if err := a.syncUserRoles(id, normalizeRoles(body["roles"])); err != nil {
 			response.FailErr(w, err)
 			return
 		}
 	}
-	if roles := normalizeRoles(body["roles"]); roles != nil {
-		_ = a.syncUserRoles(id, roles)
-	}
 	response.Success(w, "User updated successfully", map[string]any{"user": a.serializeUser(id)})
 }
 
+// UpdatePassword always operates on the authenticated user; a body id is
+// ignored so one user cannot change another user's password.
 func (a *API) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
 	id := middleware.UserIDFromContext(r.Context())
 	if id == "" {
-		id = str(body, "id")
+		response.Fail(w, "Not authorized")
+		return
 	}
 	var hash string
 	if err := a.DB.QueryRow(`SELECT password FROM "User" WHERE id = ?`, id).Scan(&hash); err != nil {
@@ -351,14 +456,26 @@ func (a *API) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, "New Password cannot be same as Old password")
 		return
 	}
-	nh, _ := auth.HashPassword(newP)
+	if err := validatePassword(newP); err != nil {
+		response.Fail(w, err.Error())
+		return
+	}
+	nh, err := auth.HashPassword(newP)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	_, _ = a.DB.Exec(`UPDATE "User" SET password = ?, updatedAt = ? WHERE id = ?`, nh, time.Now().UTC().Format(time.RFC3339Nano), id)
 	response.Success(w, "Password changed successfully", nil)
 }
 
 func (a *API) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
-	email := str(body, "email")
+	email := strings.TrimSpace(str(body, "email"))
+	if !validEmail(email) {
+		response.Fail(w, "Please provide a valid email address")
+		return
+	}
 	var id, name string
 	err := a.DB.QueryRow(`SELECT id, name FROM "User" WHERE email = ?`, email).Scan(&id, &name)
 	if err != nil {
@@ -383,26 +500,70 @@ func (a *API) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
+	password := str(body, "password")
+	if err := validatePassword(password); err != nil {
+		response.Fail(w, err.Error())
+		return
+	}
 	resetToken := chi.URLParam(r, "resetToken")
 	h := sha256.Sum256([]byte(resetToken))
 	hashed := hex.EncodeToString(h[:])
 	var userID sql.NullString
-	err := a.DB.QueryRow(`SELECT userId FROM "Token" WHERE token = ? AND expiresAt > ?`, hashed, time.Now().UTC().Format(time.RFC3339Nano)).Scan(&userID)
+	err := a.DB.QueryRow(`SELECT userId FROM "Token" WHERE token = ? AND expiresAt > ? AND usedAt IS NULL`,
+		hashed, time.Now().UTC().Format(time.RFC3339Nano)).Scan(&userID)
 	if err != nil || !userID.Valid {
 		response.OK(w, "Invalid or Expired Token")
 		return
 	}
-	nh, _ := auth.HashPassword(str(body, "password"))
-	_, _ = a.DB.Exec(`UPDATE "User" SET password = ?, updatedAt = ? WHERE id = ?`, nh, time.Now().UTC().Format(time.RFC3339Nano), userID.String)
+	nh, err := auth.HashPassword(password)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := a.DB.Begin()
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE "User" SET password = ?, updatedAt = ? WHERE id = ?`, nh, now, userID.String); err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	if _, err := tx.Exec(`UPDATE "Token" SET usedAt = ? WHERE token = ?`, now, hashed); err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	response.Success(w, "Password Reset Successful, Please Login", nil)
 }
 
 func (a *API) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, _ := a.requestInput(r)
 	id := str(body, "id")
-	_, err := a.DB.Exec(`DELETE FROM "User" WHERE id = ?`, id)
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	if id == "" {
+		response.Fail(w, "User id required")
+		return
+	}
+	if middleware.UserIDFromContext(r.Context()) == id {
+		response.Fail(w, "You cannot delete your own account")
+		return
+	}
+	res, err := a.DB.Exec(`DELETE FROM "User" WHERE id = ?`, id)
 	if err != nil {
-		response.OK(w, map[string]any{"success": true, "message": "record not found"})
+		response.FailErr(w, err)
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		response.Fail(w, "User not found")
 		return
 	}
 	response.OK(w, map[string]any{"success": true, "message": "Successfully Deleted"})

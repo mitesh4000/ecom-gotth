@@ -309,17 +309,214 @@ var operations = []operation{
 	op("POST", "/subscribe/deletesubscribe/{id}", "Subscribe", "Delete a subscriber", "", "MessageResponse", false, false),
 }
 
-func paths() map[string]any {
-	out := make(map[string]any, len(operations))
+// methodAliases lists the canonical REST methods added alongside the original
+// POST-only API. Each alias reuses the request/response schema of the POST
+// operation on the same path (or the parent path for /{id} variants) so the
+// two forms cannot drift apart.
+var methodAliases = []struct {
+	method  string
+	path    string
+	summary string
+}{
+	// Reads
+	{"GET", "/api/getloggedinuser", ""},
+	{"GET", "/api/getroles", ""},
+	{"GET", "/api/getspecificuser", ""},
+	{"GET", "/api/getspecificuser/{id}", ""},
+	{"GET", "/api/getusers", ""},
+	{"GET", "/api/loggedin", ""},
+	{"GET", "/banner/all", ""},
+	{"GET", "/banner/get-banner", ""},
+	{"GET", "/banner/get-banner-by-id/{id}", ""},
+	{"GET", "/blog/get-blog", ""},
+	{"GET", "/blog/get-blog/{id}", ""},
+	{"GET", "/blog/getblogbycategory/{id}", ""},
+	{"GET", "/blogcategory/getblogcategory", ""},
+	{"GET", "/blogcategory/getspecificcategory/{id}", ""},
+	{"GET", "/category/getcategories", ""},
+	{"GET", "/category/getspecificcategory/{id}", ""},
+	{"GET", "/category/getsubandsubsub/{id}", ""},
+	{"GET", "/color/getcolors", ""},
+	{"GET", "/color/getspecificcolor/{id}", ""},
+	{"GET", "/contact/getcontact/{id}", ""},
+	{"GET", "/contact/getcontacts", ""},
+	{"GET", "/content/getcontent", ""},
+	{"GET", "/content/getspecificcontent/{id}", ""},
+	{"GET", "/coupons/getcoupons", ""},
+	{"GET", "/customer/getcart/{id}", ""},
+	{"GET", "/customer/getcustomers", ""},
+	{"GET", "/customer/getloggedincustomer", ""},
+	{"GET", "/customer/getspecificcustomer/{id}", ""},
+	{"GET", "/customer/loggedin", ""},
+	{"GET", "/dailyrates/getrates", ""},
+	{"GET", "/dashboard/getdashboard", ""},
+	{"GET", "/dashboard/stats", ""},
+	{"GET", "/gallery/getallgallerycat", ""},
+	{"GET", "/gallery/getgallerycat", ""},
+	{"GET", "/gallery/getspecificgallery/{id}", ""},
+	{"GET", "/gallerydetails/getallgalleries", ""},
+	{"GET", "/gallerydetails/getgalleries", ""},
+	{"GET", "/gallerydetails/getspecificgalleryitem/{id}", ""},
+	{"GET", "/gst/getgst", ""},
+	{"GET", "/material/getmaterial", ""},
+	{"GET", "/orders/getallorders", ""},
+	{"GET", "/orders/gethighcustomerdata", ""},
+	{"GET", "/orders/getmedcustomerdata", ""},
+	{"GET", "/orders/getspecificorder/{id}", ""},
+	{"GET", "/orders/gettopsellproducts", ""},
+	{"GET", "/product/get-products-for-table", ""},
+	{"GET", "/product/getallproducts", ""},
+	{"GET", "/product/getproductbytags", ""},
+	{"GET", "/product/getproductsbycategoryid/{id}", ""},
+	{"GET", "/product/getproductsbysubcategories/{id}", ""},
+	{"GET", "/product/getproductsbysubsubcategories/{id}", ""},
+	{"GET", "/product/getspecificproduct/{id}", ""},
+	{"GET", "/product/getvarproduct", ""},
+	{"GET", "/product/getvarproduct/{id}", ""},
+	{"GET", "/season/getseasons", ""},
+	{"GET", "/size/getsizes", ""},
+	{"GET", "/size/getspecificsize/{id}", ""},
+	{"GET", "/stocks/getspecificstock/{id}", ""},
+	{"GET", "/stocks/getstocks", ""},
+	{"GET", "/stocks/getstocksbycategory/{id}", ""},
+	{"GET", "/stocks/getstocksbyweighttype/{id}", ""},
+	{"GET", "/subcategory/getsubcategories", ""},
+	{"GET", "/subcategory/getsubspecificcategory/{id}", ""},
+	{"GET", "/subscribe/getsubscribe", ""},
+	{"GET", "/subsubcategory/getsubsubcategories", ""},
+	{"GET", "/subsubcategory/getsubsubspecificcategory/{id}", ""},
+
+	// Partial updates
+	{"PATCH", "/api/updateuser", ""},
+	{"PATCH", "/api/updateuser/{id}", ""},
+	{"PATCH", "/banner/update-banner/{id}", ""},
+	{"PATCH", "/blog/update-blog/{id}", ""},
+	{"PATCH", "/blogcategory/updateblogcategory/{id}", ""},
+	{"PATCH", "/category/updatecategory/{id}", ""},
+	{"PATCH", "/color/updatecolor/{id}", ""},
+	{"PATCH", "/content/updatecontent/{id}", ""},
+	{"PATCH", "/coupons/updatecoupon/{id}", ""},
+	{"PATCH", "/customer/updatecustomer/{id}", ""},
+	{"PATCH", "/dailyrates/updaterate/{id}", ""},
+	{"PATCH", "/gallery/updategallery/{id}", ""},
+	{"PATCH", "/gallerydetails/updategalleryitem/{id}", ""},
+	{"PATCH", "/gst/updategst/{id}", ""},
+	{"PATCH", "/orders/updateorder/{id}", ""},
+	{"PATCH", "/product/updateproduct/{id}", ""},
+	{"PATCH", "/size/updatesize/{id}", ""},
+	{"PATCH", "/stocks/updatestock/{id}", ""},
+	{"PATCH", "/subcategory/updatesubcategory/{id}", ""},
+	{"PATCH", "/subsubcategory/updatesubsubcategory/{id}", ""},
+
+	// Complete replacement
+	{"PUT", "/category/updatecategory/{id}", "Replace a category"},
+	{"PUT", "/customer/updatecustomer/{id}", "Replace a customer profile"},
+	{"PUT", "/product/updateproduct/{id}", "Replace a product"},
+
+	// Deletes
+	{"DELETE", "/api/deleterole", ""},
+	{"DELETE", "/api/deleterole/{id}", ""},
+	{"DELETE", "/api/deleteuser", ""},
+	{"DELETE", "/api/deleteuser/{id}", ""},
+	{"DELETE", "/banner/delete-banner/{id}", ""},
+	{"DELETE", "/blog/delete-blog/{id}", ""},
+	{"DELETE", "/blogcategory/deletecategory/{id}", ""},
+	{"DELETE", "/category/deletecategory/{id}", ""},
+	{"DELETE", "/color/deletecolor/{id}", ""},
+	{"DELETE", "/contact/deletecontact/{id}", ""},
+	{"DELETE", "/content/deletecontent/{id}", ""},
+	{"DELETE", "/coupons/deletecoupon/{id}", ""},
+	{"DELETE", "/customer/deletecustomer", ""},
+	{"DELETE", "/customer/deletecustomer/{id}", ""},
+	{"DELETE", "/customer/removefromcart/{id}", ""},
+	{"DELETE", "/customer/removefromwishlist/{id}", ""},
+	{"DELETE", "/dailyrates/deleterate/{id}", ""},
+	{"DELETE", "/gallery/deletegallerycat/{id}", ""},
+	{"DELETE", "/gallerydetails/deletegalleryitem/{id}", ""},
+	{"DELETE", "/gst/deletegst/{id}", ""},
+	{"DELETE", "/orders/deleteorder/{id}", ""},
+	{"DELETE", "/product/deleteproduct/{id}", ""},
+	{"DELETE", "/size/deletesize/{id}", ""},
+	{"DELETE", "/stocks/deletestocks/{id}", ""},
+	{"DELETE", "/subcategory/deletesubcategory/{id}", ""},
+	{"DELETE", "/subscribe/deletesubscribe/{id}", ""},
+	{"DELETE", "/subsubcategory/deletesubsubcategory/{id}", ""},
+}
+
+func allOperations() []operation {
+	out := make([]operation, 0, len(operations)+len(methodAliases))
+	out = append(out, operations...)
+	byPath := make(map[string]operation, len(operations))
 	for _, o := range operations {
+		byPath[o.path] = o
+	}
+	for _, alias := range methodAliases {
+		src, ok := byPath[alias.path]
+		if !ok {
+			src, ok = byPath[strings.TrimSuffix(alias.path, "/{id}")]
+		}
+		if !ok {
+			src = operation{resp: "MessageResponse"}
+		}
+		o := src
+		o.method = alias.method
+		o.path = alias.path
+		if alias.summary != "" {
+			o.summary = alias.summary
+		}
+		// Reads and deletes carry their input in the path or query string.
+		if alias.method == "GET" || alias.method == "DELETE" {
+			o.req = ""
+			o.form = false
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+func paths() map[string]any {
+	ops := allOperations()
+	methodsByPath := map[string]map[string]bool{}
+	for _, o := range ops {
+		if methodsByPath[o.path] == nil {
+			methodsByPath[o.path] = map[string]bool{}
+		}
+		methodsByPath[o.path][o.method] = true
+	}
+
+	out := make(map[string]any, len(ops))
+	for _, o := range ops {
 		pathItem, _ := out[o.path].(map[string]any)
 		if pathItem == nil {
 			pathItem = map[string]any{}
 			out[o.path] = pathItem
 		}
-		pathItem[strings.ToLower(o.method)] = operationDoc(o)
+		doc := operationDoc(o)
+		// A POST is deprecated when a canonical method exists on the same path.
+		// POST-only create and action endpoints are not deprecated.
+		if o.method == "POST" && len(methodsByPath[o.path]) > 1 {
+			doc["deprecated"] = true
+			dep := "Deprecated: use " + canonicalMethods(methodsByPath[o.path]) +
+				" on this path. The POST form is retained for backward compatibility."
+			if desc, _ := doc["description"].(string); desc != "" {
+				doc["description"] = desc + "\n\n" + dep
+			} else {
+				doc["description"] = dep
+			}
+		}
+		pathItem[strings.ToLower(o.method)] = doc
 	}
 	return out
+}
+
+func canonicalMethods(methods map[string]bool) string {
+	var names []string
+	for _, name := range []string{"GET", "PATCH", "PUT", "DELETE"} {
+		if methods[name] {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 func operationDoc(o operation) map[string]any {

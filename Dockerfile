@@ -55,4 +55,9 @@ EXPOSE 5000
 VOLUME ["/data", "/uploads"]
 
 USER nonroot:nonroot
+
+# Distroless has no shell or curl, so the binary probes its own /healthz route.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/app/server", "healthcheck"]
+
 ENTRYPOINT ["/app/server"]

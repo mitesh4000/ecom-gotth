@@ -2,6 +2,7 @@ package response
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 )
 
@@ -31,8 +32,20 @@ func Fail(w http.ResponseWriter, msg string) {
 	OK(w, map[string]any{"success": false, "msg": msg})
 }
 
+// FailErr logs the internal error and returns a generic message. Database and
+// filesystem details must never reach an API client.
 func FailErr(w http.ResponseWriter, err error) {
-	OK(w, map[string]any{"success": false, "error": err.Error()})
+	slog.Error("request failed", "error", err)
+	JSON(w, http.StatusInternalServerError, map[string]any{
+		"success": false,
+		"msg":     "Internal Server Error",
+	})
+}
+
+// FailConflict reports a duplicate/unique-constraint style error without
+// leaking the database message.
+func FailConflict(w http.ResponseWriter, msg string) {
+	JSON(w, http.StatusConflict, map[string]any{"success": false, "msg": msg})
 }
 
 func FailStatus(w http.ResponseWriter, status int, msg string) {

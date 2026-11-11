@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,8 @@ import (
 	"github.com/mitesh4000/pushti_sangar/server/internal/models"
 	"github.com/mitesh4000/pushti_sangar/server/internal/response"
 )
+
+const maxCartQuantity = 1000
 
 func (a *API) serializeCustomer(id string, withCart bool) map[string]any {
 	var username, email, address, paymentMethods, preferences string
@@ -107,13 +110,40 @@ func (a *API) customerWishlist(customerID string) []map[string]any {
 	return items
 }
 
+func (a *API) customerEmailTaken(email, exceptID string) bool {
+	var id string
+	err := a.DB.QueryRow(`SELECT id FROM "Customer" WHERE lower(email) = lower(?)`, email).Scan(&id)
+	return err == nil && id != exceptID
+}
+
+// RegisterCustomer always creates an active, non-deleted customer. Client
+// supplied active/deleted values are ignored.
 func (a *API) RegisterCustomer(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
-	if str(body, "password") != str(body, "confirmPassword") {
+	username := strings.TrimSpace(str(body, "username"))
+	email := strings.TrimSpace(str(body, "email"))
+	password := str(body, "password")
+	if username == "" || email == "" || password == "" {
+		response.Fail(w, "Please fill all required fields")
+		return
+	}
+	if !validEmail(email) {
+		response.Fail(w, "Please provide a valid email address")
+		return
+	}
+	if password != str(body, "confirmPassword") {
 		response.Fail(w, "Passwords do not match")
 		return
 	}
-	hash, err := auth.HashPassword(str(body, "password"))
+	if err := validatePassword(password); err != nil {
+		response.Fail(w, err.Error())
+		return
+	}
+	if a.customerEmailTaken(email, "") {
+		response.Fail(w, "Email already registered")
+		return
+	}
+	hash, err := auth.HashPassword(password)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -122,9 +152,8 @@ func (a *API) RegisterCustomer(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err = a.DB.Exec(`INSERT INTO "Customer"
 		(id, username, email, address, phone, password, paymentMethods, preferences, active, deleted, createdAt, updatedAt)
-		VALUES (?, ?, ?, '[]', ?, ?, '[]', '{}', ?, 0, ?, ?)`,
-		id, str(body, "username"), str(body, "email"), nullStr(strPtr(body, "phone")), hash,
-		boolVal(body, "active", true), now, now)
+		VALUES (?, ?, ?, '[]', ?, ?, '[]', '{}', 1, 0, ?, ?)`,
+		id, username, email, nullStr(strPtr(body, "phone")), hash, now, now)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -134,22 +163,29 @@ func (a *API) RegisterCustomer(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) LoginCustomer(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
-	email, password := str(body, "email"), str(body, "password")
+	email, password := strings.TrimSpace(str(body, "email")), str(body, "password")
 	if email == "" || password == "" {
 		response.Fail(w, "Please fill all required fields")
 		return
 	}
 	var id, hash string
-	err := a.DB.QueryRow(`SELECT id, password FROM "Customer" WHERE email = ? AND deleted = 0`, email).Scan(&id, &hash)
+	var active int
+	err := a.DB.QueryRow(`SELECT id, password, active FROM "Customer" WHERE email = ? AND deleted = 0`, email).
+		Scan(&id, &hash, &active)
 	if err != nil || !auth.CheckPassword(hash, password) {
 		response.Fail(w, "Invalid Credentials")
 		return
 	}
-	token, _ := auth.GenerateToken(a.Cfg.JWTSecret, id, a.Cfg.TokenTTL)
-	http.SetCookie(w, &http.Cookie{
-		Name: "token", Value: token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteNoneMode, Secure: true, Expires: time.Now().Add(a.Cfg.TokenTTL),
-	})
+	if active == 0 {
+		response.Fail(w, "Account is disabled")
+		return
+	}
+	token, err := auth.GenerateTokenWithClaims(a.Cfg.JWTSecret, id, auth.KindCustomer, "customer", a.Cfg.TokenTTL)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	a.setAuthCookie(w, token)
 	response.OK(w, map[string]any{
 		"success":  true,
 		"msg":      "Successfully LoggedIn",
@@ -159,12 +195,14 @@ func (a *API) LoginCustomer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) LogoutCustomer(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: "", Path: "/", HttpOnly: true, Expires: time.Unix(0, 0)})
+	clearAuthCookie(w)
 	response.OK(w, map[string]any{"message": "Successfully logged out"})
 }
 
 func (a *API) GetCustomers(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.Query(`SELECT id FROM "Customer" WHERE deleted = 0 ORDER BY createdAt DESC`)
+	body, _ := a.requestInput(r)
+	limit, offset := pagination(body)
+	rows, err := a.DB.Query(`SELECT id FROM "Customer" WHERE deleted = 0 ORDER BY createdAt DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -186,14 +224,10 @@ func (a *API) GetCustomers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) GetLoggedInCustomer(w http.ResponseWriter, r *http.Request) {
-	id := middleware.UserIDFromContext(r.Context())
+	id := middleware.CustomerIDFromContext(r.Context())
 	if id == "" {
-		body, _ := a.decodeBody(r)
-		if t := tokenFromBody(body); t != "" {
-			if c, err := auth.ParseToken(a.Cfg.JWTSecret, t); err == nil {
-				id = c.ID
-			}
-		}
+		response.Fail(w, "Not authorized")
+		return
 	}
 	c := a.serializeCustomer(id, true)
 	if c == nil {
@@ -203,8 +237,14 @@ func (a *API) GetLoggedInCustomer(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"success": true, "customer": c})
 }
 
+// GetSpecificCustomer lets a customer read only their own record. Staff may
+// read any customer.
 func (a *API) GetSpecificCustomer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, id) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
 	c := a.serializeCustomer(id, true)
 	if c == nil {
 		response.Fail(w, "User not found")
@@ -214,18 +254,34 @@ func (a *API) GetSpecificCustomer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) CustomerLoginStatus(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, _ := a.requestInput(r)
 	token := tokenFromBody(body)
+	if token == "" {
+		token = middleware.TokenFromRequest(r)
+	}
 	if token == "" {
 		response.OK(w, map[string]any{"success": false})
 		return
 	}
-	_, err := auth.ParseToken(a.Cfg.JWTSecret, token)
-	response.OK(w, map[string]any{"success": err == nil})
+	claims, err := auth.ParseToken(a.Cfg.JWTSecret, token)
+	if err != nil || (claims.Kind != "" && claims.Kind != auth.KindCustomer) {
+		response.OK(w, map[string]any{"success": false})
+		return
+	}
+	response.OK(w, map[string]any{"success": true})
 }
 
 func (a *API) UpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, id) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
+	var exists int
+	if err := a.DB.QueryRow(`SELECT 1 FROM "Customer" WHERE id = ? AND deleted = 0`, id).Scan(&exists); err != nil {
+		response.Fail(w, "Customer not found")
+		return
+	}
 	body, _ := a.decodeBody(r)
 	info, _ := body["customerInfo"].(map[string]any)
 	if info == nil {
@@ -233,7 +289,7 @@ func (a *API) UpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 	sets := []string{"updatedAt = ?"}
 	args := []any{time.Now().UTC().Format(time.RFC3339Nano)}
-	if v := str(info, "username"); v != "" {
+	if v := strings.TrimSpace(str(info, "username")); v != "" {
 		sets = append(sets, "username = ?")
 		args = append(args, v)
 	}
@@ -257,6 +313,48 @@ func (a *API) UpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ReplaceCustomer implements PUT semantics for the mutable customer profile.
+// The email address is immutable here; username is required. Omitted optional
+// fields are cleared rather than left untouched. Use PATCH for partial updates.
+func (a *API) ReplaceCustomer(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, id) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
+	body, err := a.decodeBody(r)
+	if err != nil {
+		response.Fail(w, "invalid body")
+		return
+	}
+	info, _ := body["customerInfo"].(map[string]any)
+	if info == nil {
+		info = body
+	}
+	username := strings.TrimSpace(str(info, "username"))
+	if username == "" {
+		response.Fail(w, "Customer username is required")
+		return
+	}
+	res, err := a.DB.Exec(`UPDATE "Customer" SET username = ?, phone = ?, address = ?, updatedAt = ?
+		WHERE id = ? AND deleted = 0`,
+		username, nullStr(strPtr(info, "phone")), response.ToJSONString(info["address"]),
+		time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		response.Fail(w, "Customer not found")
+		return
+	}
+	response.OK(w, map[string]any{
+		"success": true, "message": "Customer replaced",
+		"customer": a.serializeCustomer(id, true),
+	})
+}
+
 func joinComma(s []string) string {
 	out := ""
 	for i, v := range s {
@@ -270,9 +368,13 @@ func joinComma(s []string) string {
 
 func (a *API) UpdateCustomerPassword(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, id) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
 	body, _ := a.decodeBody(r)
 	var hash string
-	if err := a.DB.QueryRow(`SELECT password FROM "Customer" WHERE id = ?`, id).Scan(&hash); err != nil {
+	if err := a.DB.QueryRow(`SELECT password FROM "Customer" WHERE id = ? AND deleted = 0`, id).Scan(&hash); err != nil {
 		response.Fail(w, "User not found , Please signup")
 		return
 	}
@@ -289,16 +391,28 @@ func (a *API) UpdateCustomerPassword(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, "New Password cannot be same as Old password")
 		return
 	}
-	nh, _ := auth.HashPassword(newP)
+	if err := validatePassword(newP); err != nil {
+		response.Fail(w, err.Error())
+		return
+	}
+	nh, err := auth.HashPassword(newP)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	_, _ = a.DB.Exec(`UPDATE "Customer" SET password = ?, updatedAt = ? WHERE id = ?`, nh, time.Now().UTC().Format(time.RFC3339Nano), id)
 	response.Success(w, "Password changed successfully", nil)
 }
 
 func (a *API) ForgotCustomerPassword(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
-	email := str(body, "email")
+	email := strings.TrimSpace(str(body, "email"))
+	if !validEmail(email) {
+		response.Fail(w, "Please provide a valid email address")
+		return
+	}
 	var id, username string
-	if err := a.DB.QueryRow(`SELECT id, username FROM "Customer" WHERE email = ?`, email).Scan(&id, &username); err != nil {
+	if err := a.DB.QueryRow(`SELECT id, username FROM "Customer" WHERE email = ? AND deleted = 0`, email).Scan(&id, &username); err != nil {
 		response.Fail(w, "Customer not found")
 		return
 	}
@@ -322,55 +436,149 @@ func (a *API) ForgotCustomerPassword(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) ResetCustomerPassword(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
+	password := str(body, "password")
+	if err := validatePassword(password); err != nil {
+		response.Fail(w, err.Error())
+		return
+	}
 	resetToken := chi.URLParam(r, "resetToken")
 	h := sha256.Sum256([]byte(resetToken))
 	hashed := hex.EncodeToString(h[:])
 	var customerID sql.NullString
-	err := a.DB.QueryRow(`SELECT customerId FROM "Token" WHERE token = ? AND expiresAt > ?`,
+	err := a.DB.QueryRow(`SELECT customerId FROM "Token" WHERE token = ? AND expiresAt > ? AND usedAt IS NULL`,
 		hashed, time.Now().UTC().Format(time.RFC3339Nano)).Scan(&customerID)
 	if err != nil || !customerID.Valid {
 		response.OK(w, "Invalid or Expired Token")
 		return
 	}
-	nh, _ := auth.HashPassword(str(body, "password"))
-	_, _ = a.DB.Exec(`UPDATE "Customer" SET password = ?, updatedAt = ? WHERE id = ?`,
-		nh, time.Now().UTC().Format(time.RFC3339Nano), customerID.String)
+	nh, err := auth.HashPassword(password)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := a.DB.Begin()
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE "Customer" SET password = ?, updatedAt = ? WHERE id = ?`, nh, now, customerID.String); err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	if _, err := tx.Exec(`UPDATE "Token" SET usedAt = ? WHERE token = ?`, now, hashed); err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	response.Success(w, "Password Reset Successful, Please Login", nil)
 }
 
+// DeleteCustomer is a soft delete: the row is retained so historical orders and
+// reports keep their customer reference.
 func (a *API) DeleteCustomer(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, _ := a.requestInput(r)
 	id := str(body, "id")
-	_, err := a.DB.Exec(`DELETE FROM "Customer" WHERE id = ?`, id)
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	if id == "" {
+		response.Fail(w, "Customer id required")
+		return
+	}
+	res, err := a.DB.Exec(`UPDATE "Customer" SET deleted = 1, active = 0, updatedAt = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
-		response.OK(w, map[string]any{"success": true, "message": "record not found"})
+		response.FailErr(w, err)
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		response.Fail(w, "Customer not found")
 		return
 	}
 	response.OK(w, map[string]any{"success": true, "message": "Successfully Deleted"})
 }
 
+// availableStock returns the tracked quantity for a product and whether stock
+// is tracked at all. Stock table rows win; otherwise Product.stockQuantity is
+// used. Untracked products report tracked=false.
+func (a *API) availableStock(productID string) (quantity int, tracked bool) {
+	var stockRows int
+	if err := a.DB.QueryRow(`SELECT COUNT(1) FROM "Stock" WHERE productId = ?`, productID).Scan(&stockRows); err != nil {
+		return 0, false
+	}
+	if stockRows > 0 {
+		var sum sql.NullInt64
+		_ = a.DB.QueryRow(`SELECT SUM(quantity) FROM "Stock" WHERE productId = ?`, productID).Scan(&sum)
+		return int(sum.Int64), true
+	}
+	var stockQuantity sql.NullInt64
+	if err := a.DB.QueryRow(`SELECT stockQuantity FROM "Product" WHERE id = ?`, productID).Scan(&stockQuantity); err != nil {
+		return 0, false
+	}
+	if !stockQuantity.Valid {
+		return 0, false
+	}
+	return int(stockQuantity.Int64), true
+}
+
 func (a *API) AddToCart(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, customerID) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
 	body, _ := a.decodeBody(r)
-	productID := str(body, "productId")
+	productID := strings.TrimSpace(str(body, "productId"))
 	qty := intVal(body, "quantity", 1)
+	if productID == "" || qty <= 0 || qty > maxCartQuantity {
+		response.Fail(w, "Please provide a valid product and quantity")
+		return
+	}
 
 	var exists int
-	if err := a.DB.QueryRow(`SELECT COUNT(1) FROM "Customer" WHERE id = ?`, customerID).Scan(&exists); err != nil || exists == 0 {
-		response.FailStatus(w, 404, "Customer not found")
+	if err := a.DB.QueryRow(`SELECT COUNT(1) FROM "Customer" WHERE id = ? AND deleted = 0`, customerID).Scan(&exists); err != nil || exists == 0 {
+		response.FailStatus(w, http.StatusNotFound, "Customer not found")
 		return
 	}
 	var gstID sql.NullString
-	if err := a.DB.QueryRow(`SELECT gstId FROM "Product" WHERE id = ?`, productID).Scan(&gstID); err != nil {
-		response.FailStatus(w, 404, "Product not found")
+	var active int
+	if err := a.DB.QueryRow(`SELECT gstId, isActive FROM "Product" WHERE id = ?`, productID).Scan(&gstID, &active); err != nil {
+		response.FailStatus(w, http.StatusNotFound, "Product not found")
 		return
 	}
+	if active == 0 {
+		response.Fail(w, "Product is not available")
+		return
+	}
+
 	var cartID string
 	var curQty int
 	err := a.DB.QueryRow(`SELECT id, quantity FROM "CartItem" WHERE customerId = ? AND productId = ?`, customerID, productID).
 		Scan(&cartID, &curQty)
+	newQty := qty
 	if err == nil {
-		_, _ = a.DB.Exec(`UPDATE "CartItem" SET quantity = ? WHERE id = ?`, curQty+qty, cartID)
+		newQty = curQty + qty
+	}
+	if newQty > maxCartQuantity {
+		response.Fail(w, "Quantity limit exceeded")
+		return
+	}
+	if available, tracked := a.availableStock(productID); tracked && newQty > available {
+		response.Fail(w, "Not enough stock available")
+		return
+	}
+
+	if err == nil {
+		if _, err := a.DB.Exec(`UPDATE "CartItem" SET quantity = ? WHERE id = ?`, newQty, cartID); err != nil {
+			response.FailErr(w, err)
+			return
+		}
 	} else {
 		var tax any
 		if gstID.Valid {
@@ -379,10 +587,9 @@ func (a *API) AddToCart(w http.ResponseWriter, r *http.Request) {
 				tax = g
 			}
 		}
-		_, err = a.DB.Exec(`INSERT INTO "CartItem" (id, customerId, productId, quantity, tax) VALUES (?, ?, ?, ?, ?)`,
-			models.NewID(), customerID, productID, qty, tax)
-		if err != nil {
-			response.FailStatus(w, 500, "Internal Server Error")
+		if _, err := a.DB.Exec(`INSERT INTO "CartItem" (id, customerId, productId, quantity, tax) VALUES (?, ?, ?, ?, ?)`,
+			models.NewID(), customerID, productID, newQty, tax); err != nil {
+			response.FailErr(w, err)
 			return
 		}
 	}
@@ -394,6 +601,10 @@ func (a *API) AddToCart(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) GetCustomerCartItems(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, customerID) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
 	items := a.customerCartItems(customerID)
 	// Enrich with stock
 	out := make([]map[string]any, 0, len(items))
@@ -420,7 +631,11 @@ func (a *API) GetCustomerCartItems(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) RemoveFromCart(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "id")
-	body, _ := a.decodeBody(r)
+	if !a.canAccessCustomer(r, customerID) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
+	body, _ := a.requestInput(r)
 	_, _ = a.DB.Exec(`DELETE FROM "CartItem" WHERE customerId = ? AND productId = ?`, customerID, str(body, "productId"))
 	response.OK(w, map[string]any{
 		"success": true, "msg": "Product removed from the cart successfully",
@@ -430,8 +645,16 @@ func (a *API) RemoveFromCart(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) AddToWishlist(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "id")
+	if !a.canAccessCustomer(r, customerID) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
 	body, _ := a.decodeBody(r)
-	productID := str(body, "productId")
+	productID := strings.TrimSpace(str(body, "productId"))
+	if productID == "" {
+		response.Fail(w, "Product id required")
+		return
+	}
 	_, err := a.DB.Exec(`INSERT OR IGNORE INTO "WishlistItem" (id, customerId, productId) VALUES (?, ?, ?)`,
 		models.NewID(), customerID, productID)
 	if err != nil {
@@ -446,7 +669,11 @@ func (a *API) AddToWishlist(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) RemoveFromWishlist(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "id")
-	body, _ := a.decodeBody(r)
+	if !a.canAccessCustomer(r, customerID) {
+		response.FailStatus(w, http.StatusForbidden, "Forbidden")
+		return
+	}
+	body, _ := a.requestInput(r)
 	_, _ = a.DB.Exec(`DELETE FROM "WishlistItem" WHERE customerId = ? AND productId = ?`, customerID, str(body, "productId"))
 	response.OK(w, map[string]any{
 		"success": true, "msg": "Removed from wishlist",

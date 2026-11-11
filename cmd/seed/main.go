@@ -2,6 +2,8 @@ package main
 
 import (
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -12,10 +14,22 @@ import (
 	"github.com/mitesh4000/pushti_sangar/server/migrations"
 )
 
+// Development-only credentials. Production refuses to run without explicit
+// SEED_*_PASSWORD environment variables.
+const (
+	devAdminPassword    = "Admin@12345"
+	devManagerPassword  = "Manager@12345"
+	devUserPassword     = "User@12345"
+	devCustomerPassword = "Customer@12345"
+)
+
 func main() {
 	_ = godotenv.Load()
 	_ = godotenv.Load(".env")
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	db, err := database.Open(cfg.DatabaseURL)
 	if err != nil {
@@ -24,7 +38,7 @@ func main() {
 	defer db.Close()
 
 	if err := migrations.Apply(db); err != nil {
-		log.Printf("migration warning: %v", err)
+		log.Fatalf("migrations: %v", err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -46,12 +60,16 @@ func main() {
 		}
 	}
 
+	adminPassword := seedPassword(cfg, "SEED_ADMIN_PASSWORD", devAdminPassword)
+	managerPassword := seedPassword(cfg, "SEED_MANAGER_PASSWORD", devManagerPassword)
+	userPassword := seedPassword(cfg, "SEED_USER_PASSWORD", devUserPassword)
+
 	users := []struct {
 		name, email, pass, role string
 	}{
-		{"Admin", "admin@pushtishangar.com", "Admin@123", "admin"},
-		{"Manager", "manager@pushtishangar.com", "Manager@123", "manager"},
-		{"Support", "user@pushtishangar.com", "User@123", "user"},
+		{"Admin", "admin@pushtishangar.com", adminPassword, "admin"},
+		{"Manager", "manager@pushtishangar.com", managerPassword, "manager"},
+		{"Support", "user@pushtishangar.com", userPassword, "user"},
 	}
 	for _, u := range users {
 		var exists int
@@ -59,9 +77,13 @@ func main() {
 		if exists > 0 {
 			continue
 		}
-		hash, _ := auth.HashPassword(u.pass)
+		hash, err := auth.HashPassword(u.pass)
+		if err != nil {
+			log.Printf("hash user %s: %v", u.email, err)
+			continue
+		}
 		uid := models.NewID()
-		_, err := db.Exec(`INSERT INTO "User" (id, name, email, password, photo, active, createdAt, updatedAt)
+		_, err = db.Exec(`INSERT INTO "User" (id, name, email, password, photo, active, createdAt, updatedAt)
 			VALUES (?, ?, ?, ?, '', 1, ?, ?)`, uid, u.name, u.email, hash, now, now)
 		if err != nil {
 			log.Printf("user %s: %v", u.email, err)
@@ -73,31 +95,54 @@ func main() {
 		log.Printf("seeded user %s", u.email)
 	}
 
-	customers := []struct {
-		username, email, pass string
-	}{
-		{"Aarohi", "aarohi@example.com", "Customer@123"},
-		{"Vihaan", "vihaan@example.com", "Customer@123"},
-		{"Diya", "diya@example.com", "Customer@123"},
-	}
-	for _, c := range customers {
-		var exists int
-		_ = db.QueryRow(`SELECT COUNT(1) FROM "Customer" WHERE email = ?`, c.email).Scan(&exists)
-		if exists > 0 {
-			continue
+	// Demo customers are useful for local development but must never be
+	// created automatically in production.
+	if !cfg.IsProduction() {
+		customerPassword := seedPassword(cfg, "SEED_CUSTOMER_PASSWORD", devCustomerPassword)
+		customers := []struct {
+			username, email, pass string
+		}{
+			{"Aarohi", "aarohi@example.com", customerPassword},
+			{"Vihaan", "vihaan@example.com", customerPassword},
+			{"Diya", "diya@example.com", customerPassword},
 		}
-		hash, _ := auth.HashPassword(c.pass)
-		cid := models.NewID()
-		_, err := db.Exec(`INSERT INTO "Customer"
-			(id, username, email, address, phone, password, paymentMethods, preferences, active, deleted, createdAt, updatedAt)
-			VALUES (?, ?, ?, '[]', NULL, ?, '[]', '{}', 1, 0, ?, ?)`, cid, c.username, c.email, hash, now, now)
-		if err != nil {
-			log.Printf("customer %s: %v", c.email, err)
-			continue
+		for _, c := range customers {
+			var exists int
+			_ = db.QueryRow(`SELECT COUNT(1) FROM "Customer" WHERE email = ?`, c.email).Scan(&exists)
+			if exists > 0 {
+				continue
+			}
+			hash, err := auth.HashPassword(c.pass)
+			if err != nil {
+				log.Printf("hash customer %s: %v", c.email, err)
+				continue
+			}
+			cid := models.NewID()
+			_, err = db.Exec(`INSERT INTO "Customer"
+				(id, username, email, address, phone, password, paymentMethods, preferences, active, deleted, createdAt, updatedAt)
+				VALUES (?, ?, ?, '[]', NULL, ?, '[]', '{}', 1, 0, ?, ?)`, cid, c.username, c.email, hash, now, now)
+			if err != nil {
+				log.Printf("customer %s: %v", c.email, err)
+				continue
+			}
+			log.Printf("seeded customer %s", c.email)
 		}
-		log.Printf("seeded customer %s", c.email)
 	}
 
 	_, _ = db.Exec(`INSERT OR IGNORE INTO "LatestInvoice" (id, lattestInvoice, updatedAt) VALUES ('1', 0, ?)`, now)
 	log.Println("seed complete")
+}
+
+// seedPassword returns the environment-provided password. In production an
+// explicit value is mandatory; development falls back to a documented demo
+// password.
+func seedPassword(cfg *config.Config, key, devDefault string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value != "" {
+		return value
+	}
+	if cfg.IsProduction() {
+		log.Fatalf("%s must be set in production", key)
+	}
+	return devDefault
 }

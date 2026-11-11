@@ -51,8 +51,16 @@ func (a *API) CreateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
-	_, _ = a.DB.Exec(`DELETE FROM "Role" WHERE id = ?`, str(body, "id"))
+	body, _ := a.requestInput(r)
+	id := str(body, "id")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	if id == "" {
+		response.Fail(w, "Role id required")
+		return
+	}
+	_, _ = a.DB.Exec(`DELETE FROM "Role" WHERE id = ?`, id)
 	response.OK(w, map[string]any{"success": true, "msg": "deleted"})
 }
 

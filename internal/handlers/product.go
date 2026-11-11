@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -115,7 +116,7 @@ func (a *API) listProducts(where string, args ...any) []map[string]any {
 	if where != "" {
 		q += " WHERE " + where
 	}
-	q += " ORDER BY createdAt DESC"
+	q += " ORDER BY createdAt DESC LIMIT 500"
 	rows, err := a.DB.Query(q, args...)
 	if err != nil {
 		return []map[string]any{}
@@ -137,7 +138,28 @@ func (a *API) listProducts(where string, args ...any) []map[string]any {
 }
 
 func (a *API) AddProduct(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, err := a.decodeBody(r)
+	if err != nil {
+		response.Fail(w, "invalid body")
+		return
+	}
+	a.addProduct(w, r, body)
+}
+
+func (a *API) addProduct(w http.ResponseWriter, r *http.Request, body map[string]any) {
+	name := strings.TrimSpace(str(body, "name"))
+	if name == "" {
+		response.Fail(w, "Product name is required")
+		return
+	}
+	if !validNonNegative(body, "pricesOriginal", "pricesDiscounted", "pricesCalculatedPrice", "shippingCharge", "weight", "laborCost", "discountOnLaborCost") {
+		response.Fail(w, "Prices and costs must be non-negative numbers")
+		return
+	}
+	if stock := intPtr(body, "stockQuantity"); stock != nil && *stock < 0 {
+		response.Fail(w, "Stock quantity must not be negative")
+		return
+	}
 	paths, _ := upload.SaveImages(r, "imageGallery", filepath.Join(a.Cfg.UploadsDir, "Products"), "productimage", 10)
 	gallery := response.ToJSONString(paths)
 	if gallery == "[]" && str(body, "imageGallery") != "" {
@@ -153,7 +175,7 @@ func (a *API) AddProduct(w http.ResponseWriter, r *http.Request) {
 		isActive, isProductPopular, isProductNew, filters, isVariant, mainProductId,
 		productColor, productSize, otherVariations, createdAt, updatedAt
 	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, nullStr(strPtr(body, "name")), nullStr(strPtr(body, "description")),
+		id, name, nullStr(strPtr(body, "description")),
 		nullStr(strPtr(body, "categoryId")), nullStr(strPtr(body, "subCategoryId")), nullStr(strPtr(body, "subSubCategoryId")),
 		response.ToJSONString(body["tags"]),
 		nullFloat(floatPtr(body, "pricesOriginal")), nullFloat(floatPtr(body, "pricesDiscounted")), nullFloat(floatPtr(body, "pricesCalculatedPrice")),
@@ -173,6 +195,22 @@ func (a *API) AddProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, map[string]any{"success": true, "msg": "Product added", "product": a.serializeProduct(id)})
+}
+
+// validNonNegative checks optional numeric fields. Missing fields are fine;
+// present values must parse and must not be negative.
+func validNonNegative(body map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		v, ok := body[key]
+		if !ok || v == nil || v == "" {
+			continue
+		}
+		f := floatPtr(body, key)
+		if f == nil || *f < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *API) GetAllProducts(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +234,14 @@ func (a *API) GetSpecificProduct(w http.ResponseWriter, r *http.Request) {
 func (a *API) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	body, _ := a.decodeBody(r)
+	if !validNonNegative(body, "pricesOriginal", "pricesDiscounted", "pricesCalculatedPrice", "shippingCharge", "weight", "laborCost", "discountOnLaborCost") {
+		response.Fail(w, "Prices and costs must be non-negative numbers")
+		return
+	}
+	if stock := intPtr(body, "stockQuantity"); stock != nil && *stock < 0 {
+		response.Fail(w, "Stock quantity must not be negative")
+		return
+	}
 	paths, _ := upload.SaveImages(r, "imageGallery", filepath.Join(a.Cfg.UploadsDir, "Products"), "productimage", 10)
 
 	sets := []string{"updatedAt = ?"}
@@ -252,10 +298,85 @@ func (a *API) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"success": true, "msg": "Product updated", "product": a.serializeProduct(id)})
 }
 
+// ReplaceProduct implements PUT semantics: the request body is the complete
+// new representation. Fields omitted from the body are reset to their zero
+// value (NULL for optional columns, false for flags, [] for JSON columns)
+// rather than left untouched. Use PATCH /product/updateproduct/{id} for a
+// partial update.
+func (a *API) ReplaceProduct(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	body, err := a.decodeBody(r)
+	if err != nil {
+		response.Fail(w, "invalid body")
+		return
+	}
+	if strings.TrimSpace(str(body, "name")) == "" {
+		response.Fail(w, "Product name is required")
+		return
+	}
+	if !validNonNegative(body, "pricesOriginal", "pricesDiscounted", "pricesCalculatedPrice", "shippingCharge", "weight", "laborCost", "discountOnLaborCost") {
+		response.Fail(w, "Prices and costs must be non-negative numbers")
+		return
+	}
+	if stock := intPtr(body, "stockQuantity"); stock != nil && *stock < 0 {
+		response.Fail(w, "Stock quantity must not be negative")
+		return
+	}
+	var exists int
+	if err := a.DB.QueryRow(`SELECT 1 FROM "Product" WHERE id = ?`, id).Scan(&exists); err != nil {
+		response.Fail(w, "Product not found")
+		return
+	}
+	paths, _ := upload.SaveImages(r, "imageGallery", filepath.Join(a.Cfg.UploadsDir, "Products"), "productimage", 10)
+	gallery := "[]"
+	if len(paths) > 0 {
+		gallery = response.ToJSONString(paths)
+	} else if _, ok := body["imageGallery"]; ok {
+		gallery = response.ToJSONString(body["imageGallery"])
+	}
+	_, err = a.DB.Exec(`UPDATE "Product" SET
+		name = ?, description = ?, categoryId = ?, subCategoryId = ?, subSubCategoryId = ?, tags = ?,
+		pricesOriginal = ?, pricesDiscounted = ?, pricesCalculatedPrice = ?, imageGallery = ?,
+		stockQuantity = ?, hsnCode = ?, size = ?, shippingCharge = ?, material = ?, color = ?, season = ?, gstId = ?, sku = ?,
+		calculationOnWeight = ?, weightTypeId = ?, weight = ?, laborCost = ?, discountOnLaborCost = ?,
+		isActive = ?, isProductPopular = ?, isProductNew = ?, filters = ?, isVariant = ?, mainProductId = ?,
+		productColor = ?, productSize = ?, otherVariations = ?, updatedAt = ?
+		WHERE id = ?`,
+		nullStr(strPtr(body, "name")), nullStr(strPtr(body, "description")),
+		nullStr(strPtr(body, "categoryId")), nullStr(strPtr(body, "subCategoryId")), nullStr(strPtr(body, "subSubCategoryId")),
+		response.ToJSONString(body["tags"]),
+		nullFloat(floatPtr(body, "pricesOriginal")), nullFloat(floatPtr(body, "pricesDiscounted")), nullFloat(floatPtr(body, "pricesCalculatedPrice")),
+		gallery,
+		nullInt(intPtr(body, "stockQuantity")), nullStr(strPtr(body, "hsnCode")), nullStr(strPtr(body, "size")),
+		nullFloat(floatPtr(body, "shippingCharge")), nullStr(strPtr(body, "material")), nullStr(strPtr(body, "color")),
+		nullStr(strPtr(body, "season")), nullStr(strPtr(body, "gstId")), nullStr(strPtr(body, "sku")),
+		boolVal(body, "calculationOnWeight", false), nullStr(strPtr(body, "weightTypeId")),
+		nullFloat(floatPtr(body, "weight")), nullFloat(floatPtr(body, "laborCost")), nullFloat(floatPtr(body, "discountOnLaborCost")),
+		boolVal(body, "isActive", true), boolVal(body, "isProductPopular", false), boolVal(body, "isProductNew", false),
+		response.ToJSONString(body["filters"]), boolVal(body, "isVariant", false), nullStr(strPtr(body, "mainProductId")),
+		nullStr(strPtr(body, "productColor")), nullStr(strPtr(body, "productSize")),
+		response.ToJSONString(body["otherVariations"]), time.Now().UTC().Format(time.RFC3339Nano),
+		id,
+	)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"success": true, "msg": "Product replaced", "product": a.serializeProduct(id)})
+}
+
+// DeleteProduct is a soft delete so historical order snapshots and catalogue
+// references remain intact. The row can be reactivated by an admin.
 func (a *API) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	_, err := a.DB.Exec(`DELETE FROM "Product" WHERE id = ?`, id)
+	res, err := a.DB.Exec(`UPDATE "Product" SET isActive = 0, updatedAt = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
 		response.Fail(w, "Product not found")
 		return
 	}
@@ -278,15 +399,19 @@ func (a *API) GetProductsBySubSubCategoryID(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *API) GetProductsByTag(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, _ := a.requestInput(r)
 	tag := str(body, "tag")
 	response.OK(w, map[string]any{"products": a.listProducts("tags LIKE ? AND isActive = 1", "%"+tag+"%")})
 }
 
 func (a *API) AddVarProduct(w http.ResponseWriter, r *http.Request) {
-	body, _ := a.decodeBody(r)
+	body, err := a.decodeBody(r)
+	if err != nil {
+		response.Fail(w, "invalid body")
+		return
+	}
 	body["isVariant"] = true
-	a.AddProduct(w, r)
+	a.addProduct(w, r, body)
 }
 
 func (a *API) GetVarProductByID(w http.ResponseWriter, r *http.Request) {

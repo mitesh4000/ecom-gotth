@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,11 +22,25 @@ func main() {
 	_ = godotenv.Load()
 	_ = godotenv.Load(".env")
 
+	// Container health probe. The runtime image is distroless and has no shell
+	// or curl, so the binary probes its own /healthz endpoint.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck())
+	}
+
 	cfg := config.Load()
+	logger := newLogger(cfg)
+	slog.SetDefault(logger)
+
+	if err := cfg.Validate(); err != nil {
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	if err := upload.EnsureDirs(cfg.UploadsDir,
 		"Products", "Category", "Banner", "Blog", "Gallery", "Color", "Users"); err != nil {
-		log.Fatalf("uploads dirs: %v", err)
+		logger.Error("cannot create upload directories", "error", err)
+		os.Exit(1)
 	}
 
 	dbPath := cfg.DatabaseURL
@@ -36,12 +50,17 @@ func main() {
 
 	db, err := database.Open(dbPath)
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		logger.Error("cannot open database", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	if err := migrations.Apply(db); err != nil {
-		log.Printf("migration warning: %v", err)
+		if cfg.IsProduction() {
+			logger.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+		logger.Warn("migration failed; continuing in development", "error", err)
 	}
 
 	api := &handlers.API{DB: db, Cfg: cfg}
@@ -52,22 +71,54 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
-		log.Printf("Server Started on %s (env=%s, db=%s)", cfg.Port, cfg.Env, dbPath)
+		logger.Info("server started", "port", cfg.Port, "env", cfg.Env, "db", dbPath, "auth_status", cfg.AuthStatus)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			logger.Error("listen failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
-	log.Println("shutting down...")
+	logger.Info("shutting down")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(ctx)
-	log.Println("bye")
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("graceful shutdown failed", "error", err)
+	}
+	logger.Info("stopped")
+}
+
+func runHealthcheck() int {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "5000"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
+func newLogger(cfg *config.Config) *slog.Logger {
+	level := slog.LevelInfo
+	if cfg.Env == "development" {
+		level = slog.LevelDebug
+	}
+	if cfg.IsProduction() {
+		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }

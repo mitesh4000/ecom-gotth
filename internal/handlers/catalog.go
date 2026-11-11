@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -105,6 +106,39 @@ func (a *API) UpdateCategoryByID(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, id)
 	_, err := a.DB.Exec(`UPDATE "Category" SET `+joinComma(sets)+` WHERE id = ?`, args...)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, map[string]any{"success": true, "category": a.serializeCategory(id)})
+}
+
+// ReplaceCategory implements PUT semantics for a category. Omitted optional
+// fields are cleared. Use PATCH for a partial update.
+func (a *API) ReplaceCategory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	body, err := a.decodeBody(r)
+	if err != nil {
+		response.Fail(w, "invalid body")
+		return
+	}
+	if strings.TrimSpace(str(body, "name")) == "" {
+		response.Fail(w, "Category name is required")
+		return
+	}
+	var exists int
+	if err := a.DB.QueryRow(`SELECT 1 FROM "Category" WHERE id = ?`, id).Scan(&exists); err != nil {
+		response.Fail(w, "Category not found")
+		return
+	}
+	img, _ := upload.SaveImage(r, "image", filepath.Join(a.Cfg.UploadsDir, "Category"), "categoryImage")
+	imageVal := nullStr(strPtr(body, "image"))
+	if img != "" {
+		imageVal = img
+	}
+	_, err = a.DB.Exec(`UPDATE "Category" SET name = ?, image = ?, description = ?, isActive = ?, updatedAt = ? WHERE id = ?`,
+		nullStr(strPtr(body, "name")), imageVal, nullStr(strPtr(body, "description")),
+		boolVal(body, "isActive", true), time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		response.FailErr(w, err)
 		return

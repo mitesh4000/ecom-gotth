@@ -1,54 +1,48 @@
-# Pusti Shangar (Go + Templ + HTMX + Tailwind)
+# Pushti Shangar server (Go + Chi)
 
-Stage 1 of the server-rendered migration. The existing Chi JSON API remains the
-source of truth; the new presentation layer is additive.
+Go backend for the Pushti Shangar storefront and admin panel. The existing Chi
+JSON API remains the contract used by the React `client` and `adminpanel`; the
+Templ/HTMX presentation layer added in Stage 1 is additive. The hardening pass
+described in [`AUDIT.md`](AUDIT.md) keeps every existing route and preserves
+existing SQLite data.
 
 ## Stack
 
 - **HTTP**: `net/http` + [chi](https://github.com/go-chi/chi)
 - **DB**: `database/sql` + [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go, no CGO)
-- **Auth**: JWT (`golang-jwt/jwt/v5`) + bcrypt
+- **Auth**: JWT HS256 (`golang-jwt/jwt/v5`) + bcrypt
 - **HTML**: [Templ](https://templ.guide/) (`v0.2.793`)
 - **Interactions**: [HTMX](https://htmx.org/) (`2.0.11`, served locally)
 - **CSS**: [Tailwind CSS](https://tailwindcss.com/) (`v4.3.5`, standalone CLI — no Node.js/npm)
 - **Config**: env vars + optional `.env` (`joho/godotenv`)
 
 Templ `v0.2.793` is the newest release compatible with this repository's Go
-`1.22.2` directive. Newer Templ releases require Go 1.23+. Tailwind is built
-with its standalone binary, so no JavaScript toolchain is required.
+`1.22.2` directive. Tailwind is built with its standalone binary, so no
+JavaScript toolchain is required.
 
 ## Layout
 
 ```
-cmd/server/main.go              # process entry, graceful shutdown
-cmd/seed/main.go                # idempotent seed (admin/manager/user + sample customers)
+cmd/server/main.go              # process entry, validation, graceful shutdown, health probe
+cmd/seed/main.go                # idempotent seed (roles, staff, dev customers)
 internal/
-  config/                       # env loading
-  database/                     # SQLite open + migration runner
+  config/                       # env loading + production validation
+  database/                     # SQLite pool, pragmas, migration runner
   models/                       # domain types + ID generator
-  auth/                         # JWT + password hashing
-  middleware/                   # CORS, recover, logger, protect
-  upload/                       # multipart image saves
+  auth/                         # JWT claims + password hashing
+  middleware/                   # request ID, logging, recovery, CORS, auth, roles, limits
+  upload/                       # signature-validated image saves
   response/                     # JSON helpers + `_id`/`id` dual fields
-  handlers/                     # existing JSON API handlers + route registration
+  service/                      # transactional checkout, cancellation, payments
+  handlers/                     # JSON API handlers + route registration
   docs/                         # OpenAPI 3 spec + embedded Swagger UI
-  web/
-    routes.go                   # RegisterWebRoutes: HTML + embedded static assets
-    render/render.go            # shared page/fragment/redirect/error rendering
-    handlers/home.go            # homepage, health and HTMX demo handlers
-    views/
-      layouts/base.templ        # document shell
-      components/               # navigation + footer
-      pages/                    # homepage, HTMX fragment, error page
+  web/                          # Stage 1 HTML/HTMX layer
 migrations/
-  001_init.sql                  # schema
-  embed.go                      # embeds the schema for single-binary deploys
+  001_init.sql                  # original schema
+  002_hardening.sql             # additive hardening (idempotency, soft delete, snapshots)
+  embed.go                      # embeds migrations for single-binary deploys
 styles/input.css                # Tailwind source
-static/
-  css/app.css                   # generated, minified, embedded
-  js/htmx.min.js                # local HTMX build, embedded
-  images/logo.svg               # embedded image
-  embed.go                      # go:embed for frontend assets
+static/                         # generated CSS, local HTMX, embedded images
 uploads/                        # persistent user uploads (not embedded)
 ```
 
@@ -59,13 +53,16 @@ cp .env.example .env
 make build
 ./bin/seed
 ./bin/server
-# App:    http://localhost:5000
-# Health: http://localhost:5000/health
-# API:    http://localhost:5000/api/...
+# App:     http://localhost:5000
+# Liveness: http://localhost:5000/healthz
+# Readiness:http://localhost:5000/readyz
+# API docs: http://localhost:5000/swagger
 ```
 
 `make build` installs the pinned Templ/Tailwind tools into `.tools/`, generates
 Templ Go files, builds minified CSS, and compiles `bin/server` and `bin/seed`.
+Migrations run automatically at startup; production refuses to start if they
+fail, development logs a warning.
 
 For a fast edit loop:
 
@@ -74,8 +71,8 @@ make dev
 ```
 
 This runs Templ watch, Tailwind watch, and [air](https://github.com/air-verse/air)
-for Go live reload. All watchers are stopped together on Ctrl-C. Air and the
-CLI tools are development-only and are never linked into the production binary.
+for Go live reload. Air and the CLI tools are development-only and are never
+linked into the production binary.
 
 ### Make targets
 
@@ -90,104 +87,139 @@ CLI tools are development-only and are never linked into the production binary.
 | `make dev` | Run Templ/Tailwind watchers + air |
 | `make clean` | Remove `bin/` and `tmp/` build output |
 | `make test` | Run `go test ./...` |
+| `make test-race` | Run the full suite with the race detector |
 | `make fmt` / `make vet` | Format / vet the Go code |
 
-## Server-rendered web layer
+## Configuration
 
-`internal/handlers.API.Routes()` still owns all existing API routes. It calls
-`web.RegisterWebRoutes` once, which adds:
+Configuration is loaded from the environment, with `.env` as a development
+convenience. See [`.env.example`](.env.example) for every supported variable.
 
-```
-/                          Full HTML homepage
-/health                    JSON liveness response
-/fragments/server-message  HTMX HTML fragment (GET)
-/static/*                  Embedded CSS, JS and images
-```
+### Production requirements
 
-`internal/web/render` provides the reusable rendering contract:
+`config.Validate()` fails closed when the process runs with `ENV=production` and:
 
-- `Renderer.Page` — full document with `text/html; charset=utf-8`
-- `Renderer.Fragment` — fragment with `Cache-Control: no-store`
-- `Renderer.ValidationError` — 4xx fragment for form errors
-- `Renderer.Error` — user-safe error page; details stay in server logs
-- `Renderer.Redirect` — `303 See Other`, or `HX-Redirect` for HTMX requests
-- `IsHTMX` — checks `HX-Request: true` for transport behaviour only
+- `JWT_SECRET` is missing, shorter than 32 characters, or the development default;
+- `CORS_ORIGINS` is empty, contains `*`, or contains a localhost origin;
+- `COOKIE_SECURE` is false;
+- `PAYMENT_PROVIDER` and `PAYMENT_SECRET` are set without each other.
 
-`HX-Request` is **not** an authentication signal. Protected handlers must still
-run the existing auth middleware.
+Generate a secret with `openssl rand -hex 32`. Never commit `.env`; it is
+ignored by Git and only `.env.example` (placeholders) is tracked.
 
-The homepage's “Load server message” button demonstrates the full round trip:
-HTMX sends a GET with `HX-Request: true`, Go returns a Templ fragment, and HTMX
-swaps it into `#server-message`. A normal browser visit to the fragment URL is
-redirected back to the homepage section instead of rendering a bare fragment.
+### Auth status mode
 
-## Tailwind CSS
+`AUTH_STATUS` controls how authentication failures are reported:
 
-`styles/input.css` imports Tailwind and scans `internal/web` for complete class
-names in `.templ` and Go files. Production CSS is minified:
+| Value | Behaviour | Use |
+|---|---|---|
+| `legacy` | HTTP 200 + `{"success":false,"msg":...}` for missing/invalid auth | Default in development, preserves old clients |
+| `strict` | HTTP 401 (not authenticated) / 403 (forbidden) | Default in production |
 
-```bash
-make css
-```
+Both modes enforce the same authorization checks. Set `AUTH_STATUS=strict` in
+staging before switching clients to status-code handling.
 
-The result is `static/css/app.css`. It is compiled and committed so `go build`
-works immediately; Docker regenerates it from source during the image build.
-Do not build class names dynamically (for example `"bg-" + color`); use complete
-class strings or Tailwind's explicit source safelisting.
+### Payment verification
 
-## Static assets and embedding
+`POST /api/payment` and `POST /api/create-order` verify a provider callback. The
+provider signs the string `orderId|providerReference|amount` with HMAC-SHA256
+using `PAYMENT_SECRET`; the amount is always read from the order row, never from
+the client. When `PAYMENT_PROVIDER`/`PAYMENT_SECRET` are unset the endpoint fails
+closed with HTTP 503. Client-supplied payment status is never trusted.
 
-`static/embed.go` embeds `css/`, `js/` and `images/` into the binary. The Chi
-router serves them under `/static/*`. The compiled server therefore does not
-need the source tree or a Node/Tailwind installation at runtime.
+## Security model
 
-User uploads are deliberately **not** embedded. They stay in `UPLOADS_DIR`
-(`./uploads` in development, `/uploads` in Docker) and should be backed by
-persistent storage.
+- **Token scope**: JWT claims include `kind` (`user`/`customer`) and the user's
+  primary `role`. Legacy tokens without `kind` are resolved against the `User`
+  and `Customer` tables, so existing sessions keep working.
+- **Route scopes**: routes are grouped into public, customer, staff
+  (`user`/`manager`/`admin`), manager, and admin-only middleware scopes. A route
+  cannot silently become public by omission.
+- **Resource ownership**: customer, cart, wishlist, order, and payment handlers
+  check that the authenticated customer owns the record. Staff roles may read
+  broader data where the original API allowed it.
+- **Privilege changes**: public registration always creates an active `user`.
+  Only an authenticated administrator can assign roles or change `active`.
+  Managers can create ordinary users but cannot mint or promote administrators.
+  Users cannot change their own roles, and cannot change another user's password.
+- **Server-controlled money**: order line prices, discounts, shipping, totals,
+  status, and payment status are computed server-side. Client values are ignored.
+- **Inventory**: checkout, cancellation, and order deletion run in transactions.
+  Stock is decremented only after validation, and `_txlock=immediate` serialises
+  writers so concurrent checkouts cannot oversell. `Idempotency-Key` (header or
+  body) makes retried checkouts return the original order.
+- **Uploads**: only JPEG, PNG, GIF, and WebP are accepted, verified by content
+  signature with `http.DetectContentType`. SVG/BMP and disguised text files are
+  rejected, names are randomised, and files are written via a temp file + rename.
+  The per-image limit is 8 MB.
+- **Errors**: unexpected failures are logged server-side and returned as a
+  generic `500 Internal Server Error`; database errors are not leaked.
+- **Transport**: security headers, strict CORS allow-list, request IDs, request
+  body limits, login rate limiting, and optional trusted-proxy handling.
 
-The SQL schema is also embedded (`migrations/embed.go`), so the binary can
-create or migrate its database without a `migrations/` directory at runtime.
+### Soft deletes
 
-## API documentation (Swagger)
+- Products: `isActive=0` (historical order items keep their snapshot).
+- Customers: `deleted=1, active=0` (orders and reports keep the reference).
+- Orders: `deletedAt` is set and any un-cancelled stock is restored.
 
-Start the server, then open:
+## Database
 
-- Swagger UI: <http://localhost:5000/swagger>
-- OpenAPI 3 JSON: <http://localhost:5000/swagger/openapi.json>
+Migrations are embedded and applied in filename order, recorded in
+`schema_migrations`. `001_init.sql` adopts the original schema idempotently and
+`002_hardening.sql` only adds columns/tables/indexes — no existing table is
+recreated or dropped.
 
-The UI assets are embedded in the binary (`github.com/swaggo/files/v2`), so the
-docs work without internet access or a CDN. The spec lives in
-`internal/docs/spec.go` (routes/tags) and `internal/docs/schemas.go`
-(request/response models). Add a route to the `operations` table and the matching
-schema to keep the docs in sync.
+SQLite runs in WAL mode with a 5 second busy timeout and immediate write
+transactions. This is reliable for a single server instance and moderate
+traffic. For multi-instance or high-write production deployments, move to
+PostgreSQL:
 
-Authentication can be supplied with Swagger's **Authorize** button (Bearer JWT)
-or by passing a `token` field in the request body, matching the server's
-existing token handling.
+1. Replace the `modernc.org/sqlite` driver with `github.com/jackc/pgx/v5/stdlib`.
+2. Change `database.Open` to accept a `postgres://` DSN and remove the SQLite
+   `_pragma`/`_txlock` query parameters.
+3. Translate the two migrations to PostgreSQL syntax (types are close; the
+   partial unique index on `Order.idempotencyKey` is already valid).
+4. Use `SELECT ... FOR UPDATE` (or `UPDATE ... WHERE stock >= ?`) in
+   `service.Place` instead of relying on SQLite's database-wide write lock.
+
+The handler and service layers do not depend on SQLite-specific SQL beyond the
+`ON CONFLICT` upsert in invoice generation, which PostgreSQL also supports.
 
 ## Seeded logins
 
-| Role     | Email                     | Password      |
-|----------|---------------------------|---------------|
-| Admin    | admin@pushtishangar.com   | Admin@123     |
-| Manager  | manager@pushtishangar.com | Manager@123   |
-| Support  | user@pushtishangar.com    | User@123      |
-| Customer | aarohi@example.com        | Customer@123  |
+Development passwords are shown below. Override them with
+`SEED_ADMIN_PASSWORD`, `SEED_MANAGER_PASSWORD`, `SEED_USER_PASSWORD`, and
+`SEED_CUSTOMER_PASSWORD`. In production the seed command refuses to run unless
+the staff passwords are supplied, and it does not create demo customers.
+
+| Role     | Email                     | Development password |
+|----------|---------------------------|----------------------|
+| Admin    | admin@pushtishangar.com   | `Admin@12345`        |
+| Manager  | manager@pushtishangar.com | `Manager@12345`      |
+| Support  | user@pushtishangar.com    | `User@12345`         |
+| Customer | aarohi@example.com        | `Customer@12345`     |
 
 ## API compatibility
 
 Route prefixes and POST-based endpoints match the original Express app so the
-React `client` and `adminpanel` can point at this server with the same
-`REACT_APP_BASE_URL`.
+React clients can point at this server with the same `REACT_APP_BASE_URL`.
+Responses keep both `_id` and `id` on records.
 
-Responses include both `_id` and `id` on records. Auth accepts Bearer header,
-`token` cookie, or body field where the original did.
+Auth accepts:
+
+- `Authorization: Bearer <token>` (preferred);
+- the `token` cookie set by login;
+- a `token` field in a JSON or form body for legacy clients.
+
+Query-string tokens are intentionally no longer accepted. New tokens include
+`kind`/`role` claims; old tokens remain valid until they expire.
 
 ### Main route groups
 
 | Prefix | Purpose |
 |--------|---------|
-| `/api/*` | Users, roles, payment stubs |
+| `/api/*` | Users, roles, login, registration, password reset, payment |
 | `/category`, `/subcategory`, `/subsubcategory` | Catalog hierarchy |
 | `/product` | Products + variants |
 | `/customer` | Customers, cart, wishlist, auth |
@@ -199,6 +231,27 @@ Responses include both `_id` and `id` on records. Auth accepts Bearer header,
 | `/contact`, `/subscribe` | Lead forms |
 | `/dashboard/*` | Aggregates |
 | `/uploads/*` | Static files |
+| `/healthz`, `/readyz` | Liveness / readiness probes |
+
+## Server-rendered web layer
+
+`internal/handlers.API.Routes()` owns all existing API routes and calls
+`web.RegisterWebRoutes` once, which adds the Stage 1 HTML pages, HTMX fragment,
+and embedded static assets. `internal/web/render` provides page, fragment,
+validation-error, error, and redirect helpers. `HX-Request` is a transport hint,
+**not** an authentication signal; protected handlers still run the auth
+middleware.
+
+## API documentation (Swagger)
+
+Start the server, then open:
+
+- Swagger UI: <http://localhost:5000/swagger>
+- OpenAPI 3 JSON: <http://localhost:5000/swagger/openapi.json>
+
+The UI assets are embedded, so the docs work offline. The spec lives in
+`internal/docs/spec.go` and `internal/docs/schemas.go`. Add a route to the
+`operations` table and the matching schema to keep docs in sync.
 
 ## Docker
 
@@ -206,21 +259,19 @@ Build and run with Compose:
 
 ```bash
 cp .env.example .env
-# Set a strong JWT_SECRET in .env before deploying.
+# Set ENV=production, a strong JWT_SECRET, CORS_ORIGINS and COOKIE_SECURE=true.
 docker compose up --build -d
 ```
 
-The image is multi-stage:
-
-1. Install pinned Templ and Tailwind standalone binaries.
-2. Download Go modules.
-3. Run `templ generate`, build minified Tailwind CSS, and compile static Go binaries.
-4. Copy only the binaries and empty writable data/upload directories into
-   `gcr.io/distroless/static-debian12:nonroot`.
+The image is multi-stage: pinned Templ/Tailwind tools and Go modules are used to
+generate assets and compile static binaries, then only the binaries and empty
+writable data/upload directories are copied into
+`gcr.io/distroless/static-debian12:nonroot`.
 
 Compose persists SQLite and uploads in named volumes (`app_data`, `app_uploads`).
 The runtime defaults are `DATABASE_URL=/data/app.db`, `UPLOADS_DIR=/uploads` and
-`TMPDIR=/data/tmp`; override them with environment variables as needed.
+`TMPDIR=/data/tmp`. The container healthcheck runs `/app/server healthcheck`,
+which probes `/healthz` (the distroless image has no shell or curl).
 
 The seed binary is included in the image:
 
@@ -228,36 +279,46 @@ The seed binary is included in the image:
 docker compose run --rm --entrypoint /app/seed app
 ```
 
-## Verification
+## Tests
 
 ```bash
-make generate
-make css
-go fmt ./...
-go vet ./...
-go test ./...
-go build ./cmd/server
+make test-race
 ```
 
-Then, with the server running:
+The suite uses temporary SQLite databases and real migrations. It covers:
 
-```bash
-curl -i http://localhost:5000/                       # 200 HTML
-curl -i http://localhost:5000/static/css/app.css     # 200 CSS
-curl -i http://localhost:5000/static/js/htmx.min.js  # 200 JS
-curl -i http://localhost:5000/health                 # 200 JSON
-curl -i -H 'HX-Request: true' \
-  http://localhost:5000/fragments/server-message     # 200 HTML fragment
-curl -i -X POST http://localhost:5000/api/payment    # 200 JSON
-```
+- password hashing, token expiry, algorithm confusion (`none`), wrong secrets,
+  and legacy tokens without `kind`;
+- upload signature validation, path traversal, and rejected SVG/text payloads;
+- transactional checkout, server-side totals, line-item snapshots, coupons,
+  idempotency, concurrent oversell prevention, cancellation restock, and soft
+  delete restock;
+- HMAC payment verification, invalid signatures, unconfigured providers,
+  cross-customer access, and payment idempotency;
+- HTTP integration: auth status modes, registration privilege injection,
+  self/other ownership, role checks, cart stock limits, order ownership and
+  totals, admin cancellation, soft delete, health probes, 404s, and error
+  message sanitisation.
 
-## Notes
+`go build ./...`, `go vet ./...`, and `go test -race ./...` pass in this
+repository. Docker was not built in the audit environment because Docker is not
+installed there.
 
-- Banner/color static mounts were moved to `/banner-images` and `/color-images`
-  because chi cannot mount a file server on the same path as an API route group.
-  Files are still available under `/uploads/Banner` and `/uploads/Color`.
-- Payment gateway handlers are stubs; wire your provider keys in production.
-- SQLite is fine for local/dev; for production traffic prefer PostgreSQL (swap
-  driver + DSN in `database.Open`).
+## Notes and limitations
+
+- SQLite is a single-node database. Use PostgreSQL before scaling horizontally.
+- Rate limiting is in-process; use a shared store (Redis) for multiple instances.
+- JWTs are stateless: there is no server-side revocation list beyond disabling
+  the account or changing its password. Keep `TokenTTL` short.
+- Password reset requires an email provider; without `EMAIL_*` settings the
+  reset email is not delivered (development logs it).
+- Payment verification is a generic HMAC callback contract, not a full Stripe or
+  Razorpay adapter. Add provider-specific signature parsing behind
+  `service.VerifyPayment`.
+- Upload validation checks file signatures; it does not re-encode images. Put
+  uploads behind a CDN or image proxy if you need server-side re-encoding.
+- Banner/color static mounts use `/banner-images` and `/color-images` because
+  chi cannot mount a file server on the same path as an API route group. Files
+  are also available under `/uploads/Banner` and `/uploads/Color`.
 - The `.env` file is intentionally untracked. Keep real secrets out of version
   control and set `JWT_SECRET` explicitly in production.

@@ -2,13 +2,17 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mitesh4000/pushti_sangar/server/internal/middleware"
 	"github.com/mitesh4000/pushti_sangar/server/internal/models"
 	"github.com/mitesh4000/pushti_sangar/server/internal/response"
+	"github.com/mitesh4000/pushti_sangar/server/internal/service"
 	"github.com/mitesh4000/pushti_sangar/server/internal/upload"
 )
 
@@ -636,7 +640,57 @@ func (a *API) DeleteSubscribe(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"success": true, "msg": "deleted"})
 }
 
-// Payment gateway placeholder (keeps route compatibility)
+// PaymentGateway verifies a provider callback. The order is only marked paid
+// when the HMAC signature over orderId|providerReference|amount is valid.
+// Without PAYMENT_PROVIDER and PAYMENT_SECRET the endpoint fails closed.
 func (a *API) PaymentGateway(w http.ResponseWriter, r *http.Request) {
-	response.OK(w, map[string]any{"success": true, "msg": "Payment gateway endpoint – configure provider keys in production"})
+	body, err := a.decodeBody(r)
+	if err != nil {
+		response.Fail(w, "invalid body")
+		return
+	}
+	customerID := strings.TrimSpace(str(body, "customerId"))
+	if actor := middleware.CustomerIDFromContext(r.Context()); actor != "" {
+		customerID = actor
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		idempotencyKey = strings.TrimSpace(str(body, "idempotencyKey"))
+	}
+	result, err := service.VerifyPayment(r.Context(), a.DB, service.PaymentInput{
+		OrderID:           strings.TrimSpace(str(body, "orderId")),
+		CustomerID:        customerID,
+		Provider:          a.Cfg.PaymentProvider,
+		Secret:            a.Cfg.PaymentSecret,
+		ProviderReference: strings.TrimSpace(str(body, "providerReference")),
+		Signature:         strings.TrimSpace(str(body, "signature")),
+		IdempotencyKey:    idempotencyKey,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrPaymentNotConfigured):
+			response.FailStatus(w, http.StatusServiceUnavailable, "Payment provider is not configured")
+		case errors.Is(err, service.ErrPaymentInvalid):
+			response.FailStatus(w, http.StatusBadRequest, "Payment verification failed")
+		case errors.Is(err, service.ErrPaymentOrderNotFound):
+			response.FailStatus(w, http.StatusNotFound, "Order not found")
+		case errors.Is(err, service.ErrPaymentOrderPaid):
+			response.OK(w, map[string]any{"success": true, "msg": "Order already paid", "payment": map[string]any{
+				"orderId": result.OrderID, "status": "succeeded", "amount": result.Amount,
+			}})
+		default:
+			response.FailErr(w, err)
+		}
+		return
+	}
+	response.OK(w, map[string]any{
+		"success": true,
+		"msg":     "Payment verified",
+		"payment": map[string]any{
+			"orderId":           result.OrderID,
+			"status":            result.Status,
+			"amount":            result.Amount,
+			"providerReference": result.ProviderReference,
+		},
+	})
 }

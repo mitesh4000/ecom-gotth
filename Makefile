@@ -45,7 +45,7 @@ ifeq ($(TAILWIND_OS),windows)
   TAILWIND_ASSET := $(TAILWIND_ASSET).exe
 endif
 
-.PHONY: all tools generate css css-watch templ-watch build run dev clean test fmt vet
+.PHONY: all tools generate css css-watch templ-watch build run dev clean test test-race fmt vet
 
 all: build
 
@@ -99,6 +99,9 @@ dev: generate css $(AIR_BIN)
 
 test:
 	@go test ./...
+
+test-race:
+	@go test -race -timeout 300s ./...
 
 fmt:
 	@gofmt -w $$(find . -name '*.go' -not -path './vendor/*' -not -path './.tools/*')
