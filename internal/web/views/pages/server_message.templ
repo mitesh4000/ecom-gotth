@@ -1,0 +1,12 @@
+package pages
+
+import "time"
+
+// ServerMessage is the HTMX fragment returned by the demonstration endpoint.
+templ ServerMessage(message string, renderedAt time.Time) {
+	<div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
+		<p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Server response</p>
+		<p class="mt-2 text-base font-medium">{ message }</p>
+		<p class="mt-2 text-xs text-emerald-700">Rendered by Go at { renderedAt.Format(time.RFC3339) }</p>
+	</div>
+}

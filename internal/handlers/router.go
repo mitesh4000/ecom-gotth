@@ -8,6 +8,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/mitesh4000/pushti_sangar/server/internal/docs"
 	"github.com/mitesh4000/pushti_sangar/server/internal/middleware"
+	"github.com/mitesh4000/pushti_sangar/server/internal/web"
 )
 
 func (a *API) Routes() http.Handler {
@@ -36,8 +37,11 @@ func (a *API) Routes() http.Handler {
 	fileServer("/color-images", "Color")
 	fileServer("/banner-images", "Banner")
 
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Home Page"))
+	// Server-rendered pages and embedded static assets. API registration below
+	// remains the single source of truth for the existing JSON endpoints.
+	web.RegisterWebRoutes(r, web.WebDependencies{
+		DB:  a.DB,
+		Cfg: a.Cfg,
 	})
 
 	// /api – users, roles, payment

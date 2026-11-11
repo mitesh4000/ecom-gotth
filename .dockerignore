@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.tools
+bin
+tmp
+data
+uploads
+static/css/app.css
+**/*_templ.go
+README.md

@@ -24,7 +24,7 @@ func (a *API) serializeCategory(id string) map[string]any {
 	return withID(id, map[string]any{
 		"name": nullStr(nullStringPtr(name)), "image": nullStr(nullStringPtr(image)),
 		"description": nullStr(nullStringPtr(desc)),
-		"createdAt": scanTime(created), "updatedAt": scanTime(updated),
+		"createdAt":   scanTime(created), "updatedAt": scanTime(updated),
 		"isDeleted": isDeleted != 0, "isActive": isActive != 0,
 	})
 }

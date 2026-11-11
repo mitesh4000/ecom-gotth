@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Pusti Shangar</title>
+  <rect width="48" height="48" rx="12" fill="#047857"/>
+  <path d="M14 33V15h9.2c4.4 0 7.3 2.6 7.3 6.6 0 4.1-2.9 6.7-7.3 6.7H19V33h-5Zm5-8.7h3.7c1.8 0 2.9-1 2.9-2.6s-1.1-2.6-2.9-2.6H19v5.2Z" fill="#ECFDF5"/>
+  <circle cx="34" cy="33" r="3" fill="#6EE7B7"/>
+</svg>

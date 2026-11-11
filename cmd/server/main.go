@@ -15,6 +15,7 @@ import (
 	"github.com/mitesh4000/pushti_sangar/server/internal/database"
 	"github.com/mitesh4000/pushti_sangar/server/internal/handlers"
 	"github.com/mitesh4000/pushti_sangar/server/internal/upload"
+	"github.com/mitesh4000/pushti_sangar/server/migrations"
 )
 
 func main() {
@@ -39,11 +40,8 @@ func main() {
 	}
 	defer db.Close()
 
-	mig := filepath.Join("migrations", "001_init.sql")
-	if _, err := os.Stat(mig); err == nil {
-		if err := database.Migrate(db, mig); err != nil {
-			log.Printf("migration warning: %v", err)
-		}
+	if err := migrations.Apply(db); err != nil {
+		log.Printf("migration warning: %v", err)
 	}
 
 	api := &handlers.API{DB: db, Cfg: cfg}

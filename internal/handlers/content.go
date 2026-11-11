@@ -41,7 +41,7 @@ func (a *API) listBanners(w http.ResponseWriter, where string) {
 				"bannerTitle": nullStr(nullStringPtr(title)), "image": nullStr(nullStringPtr(image)),
 				"description": nullStr(nullStringPtr(desc)), "bannerType": nullStr(nullStringPtr(btype)),
 				"bannerText": nullStr(nullStringPtr(btext)),
-				"createdAt": scanTime(created), "updatedAt": scanTime(updated),
+				"createdAt":  scanTime(created), "updatedAt": scanTime(updated),
 				"isDeleted": del != 0, "isActive": active != 0,
 			}))
 		}
@@ -89,7 +89,7 @@ func (a *API) GetBannerByID(w http.ResponseWriter, r *http.Request) {
 		"bannerTitle": nullStr(nullStringPtr(title)), "image": nullStr(nullStringPtr(image)),
 		"description": nullStr(nullStringPtr(desc)), "bannerType": nullStr(nullStringPtr(btype)),
 		"bannerText": nullStr(nullStringPtr(btext)),
-		"createdAt": scanTime(created), "updatedAt": scanTime(updated),
+		"createdAt":  scanTime(created), "updatedAt": scanTime(updated),
 		"isDeleted": del != 0, "isActive": active != 0,
 	})})
 }

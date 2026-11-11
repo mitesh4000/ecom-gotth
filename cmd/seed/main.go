@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"path/filepath"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -10,6 +9,7 @@ import (
 	"github.com/mitesh4000/pushti_sangar/server/internal/config"
 	"github.com/mitesh4000/pushti_sangar/server/internal/database"
 	"github.com/mitesh4000/pushti_sangar/server/internal/models"
+	"github.com/mitesh4000/pushti_sangar/server/migrations"
 )
 
 func main() {
@@ -23,8 +23,9 @@ func main() {
 	}
 	defer db.Close()
 
-	mig := filepath.Join("migrations", "001_init.sql")
-	_ = database.Migrate(db, mig)
+	if err := migrations.Apply(db); err != nil {
+		log.Printf("migration warning: %v", err)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 

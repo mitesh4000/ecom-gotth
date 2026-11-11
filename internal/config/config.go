@@ -8,19 +8,19 @@ import (
 )
 
 type Config struct {
-	Port         string
-	Env          string
-	DatabaseURL  string
-	JWTSecret    string
-	FrontendURL  string
-	AdminURL     string
-	CORSOrigins  []string
-	EmailHost    string
-	EmailPort    int
-	EmailUser    string
-	EmailPass    string
-	UploadsDir   string
-	TokenTTL     time.Duration
+	Port        string
+	Env         string
+	DatabaseURL string
+	JWTSecret   string
+	FrontendURL string
+	AdminURL    string
+	CORSOrigins []string
+	EmailHost   string
+	EmailPort   int
+	EmailUser   string
+	EmailPass   string
+	UploadsDir  string
+	TokenTTL    time.Duration
 }
 
 func Load() *Config {

@@ -1,0 +1,23 @@
+# Local configuration (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Build and local tooling output
+/bin/
+/tmp/
+/.tools/
+
+# Runtime data (SQLite WAL/SHM files and uploads)
+/data/*.db-wal
+/data/*.db-shm
+/uploads/*
+!/uploads/.gitkeep
+
+# Editor / OS noise
+.DS_Store
+*.swp
+
+# Direct `go build ./cmd/server` output
+/server
+/seed

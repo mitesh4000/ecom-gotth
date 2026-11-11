@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        TEMPL_VERSION: v0.2.793
+        TAILWIND_VERSION: v4.3.5
+    image: pushti-sangar:stage1
+    ports:
+      - "${PORT:-5000}:5000"
+    env_file:
+      - .env
+    environment:
+      ENV: production
+      PORT: "5000"
+      DATABASE_URL: /data/app.db
+      UPLOADS_DIR: /uploads
+      TMPDIR: /data/tmp
+    volumes:
+      - app_data:/data
+      - app_uploads:/uploads
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  app_uploads:

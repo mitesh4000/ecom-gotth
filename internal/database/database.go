@@ -49,9 +49,14 @@ func Migrate(db *sql.DB, migrationPath string) error {
 	if err != nil {
 		return fmt.Errorf("read migration: %w", err)
 	}
+	return MigrateSQL(db, string(sqlBytes))
+}
 
+// MigrateSQL applies a SQL migration document. It is used by the embedded
+// migration package so a compiled binary does not need the source tree.
+func MigrateSQL(db *sql.DB, migrationSQL string) error {
 	// Split on statement boundaries carefully enough for this schema
-	stmts := splitSQL(string(sqlBytes))
+	stmts := splitSQL(migrationSQL)
 	tx, err := db.Begin()
 	if err != nil {
 		return err

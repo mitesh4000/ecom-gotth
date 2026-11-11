@@ -40,15 +40,15 @@ func (a *API) serializeProduct(id string) map[string]any {
 	}
 
 	m := withID(id, map[string]any{
-		"name":                  nullStr(nullStringPtr(name)),
-		"description":           nullStr(nullStringPtr(desc)),
-		"categoryId":            nullStr(nullStringPtr(catID)),
-		"Category":              nullStr(nullStringPtr(catID)),
-		"subCategoryId":         nullStr(nullStringPtr(subID)),
-		"SubCategory":           nullStr(nullStringPtr(subID)),
-		"subSubCategoryId":      nullStr(nullStringPtr(subSubID)),
-		"SubSubCategory":        nullStr(nullStringPtr(subSubID)),
-		"tags":                  response.ParseJSONField(tags.String, []any{}),
+		"name":             nullStr(nullStringPtr(name)),
+		"description":      nullStr(nullStringPtr(desc)),
+		"categoryId":       nullStr(nullStringPtr(catID)),
+		"Category":         nullStr(nullStringPtr(catID)),
+		"subCategoryId":    nullStr(nullStringPtr(subID)),
+		"SubCategory":      nullStr(nullStringPtr(subID)),
+		"subSubCategoryId": nullStr(nullStringPtr(subSubID)),
+		"SubSubCategory":   nullStr(nullStringPtr(subSubID)),
+		"tags":             response.ParseJSONField(tags.String, []any{}),
 		"prices": map[string]any{
 			"original":        nullFloat(nullFloatPtr(pOrig)),
 			"discounted":      nullFloat(nullFloatPtr(pDisc)),

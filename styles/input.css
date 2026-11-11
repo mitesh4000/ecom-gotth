@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/*
+ * Tailwind v4 scans these source trees for class names. The views contain the
+ * Templ markup; the Go handler tree is included because future handlers may
+ * build complete class strings for reusable components.
+ */
+@source "../internal/web";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+  }
+}
+
+@layer components {
+  /*
+   * HTMX adds .htmx-request to the element referenced by hx-indicator while a
+   * request is in flight. Keeping the styles here means no inline JavaScript
+   * is needed to show request state.
+   */
+  .htmx-indicator {
+    display: none;
+    opacity: 0;
+    transition: opacity 150ms ease-in;
+  }
+
+  .htmx-request .htmx-indicator,
+  .htmx-request.htmx-indicator {
+    display: flex;
+    opacity: 1;
+  }
+}
