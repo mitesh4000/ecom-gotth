@@ -1,0 +1,171 @@
+package components
+
+import (
+	"strconv"
+
+	"github.com/mitesh4000/pushti_sangar/server/internal/service"
+)
+
+// CartFeedback is the main response fragment for every cart mutation. The
+// layout keeps an empty live region at #cart-feedback so errors and confirmations
+// are announced without a page reload.
+templ CartFeedback(message string, isError bool) {
+	if message != "" {
+		if isError {
+			<div class="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800" role="alert">
+				<svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v5M12 16.5v.5M10.3 4.2 2.8 17.1A1.8 1.8 0 0 0 4.4 19.8h15.2a1.8 1.8 0 0 0 1.6-2.7L13.7 4.2a1.9 1.9 0 0 0-3.4 0Z"/>
+				</svg>
+				<span>{ message }</span>
+			</div>
+		} else {
+			<div class="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800" role="status">
+				<svg class="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4 4 10-10"/>
+				</svg>
+				<span>{ message }</span>
+			</div>
+		}
+	}
+}
+
+// CartMutationResponse refreshes the feedback region plus the header badge,
+// cart line list and summary out-of-band. Ids absent from the current page are
+// simply ignored by HTMX.
+templ CartMutationResponse(cart service.CartView, message string) {
+	@CartFeedback(message, false)
+	@CartBadge(cart.ItemCount, true)
+	@CartItems(cart, true)
+	@CartSummary(cart, true)
+}
+
+// CartItems renders the line list. oob marks it for an out-of-band swap.
+templ CartItems(cart service.CartView, oob bool) {
+	if oob {
+		<div id="cart-items" hx-swap-oob="outerHTML" class="space-y-4">
+			@cartItemsBody(cart)
+		</div>
+	} else {
+		<div id="cart-items" class="space-y-4">
+			@cartItemsBody(cart)
+		</div>
+	}
+}
+
+templ cartItemsBody(cart service.CartView) {
+	if cart.Empty() {
+		<div class="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+			<h2 class="text-lg font-semibold text-slate-950">Your cart is empty</h2>
+			<p class="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-600">Browse the collection and add something you love. Your cart is stored securely on the server.</p>
+			<a href="/products" class="mt-6 inline-flex items-center justify-center rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">Start shopping</a>
+		</div>
+	} else {
+		for _, item := range cart.Items {
+			<article class="flex gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:gap-5 sm:p-5">
+				<a href={ templ.URL(item.URL()) } class="relative block h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:h-28 sm:w-28">
+					<img src={ item.Image } alt={ item.Name } loading="lazy" width="224" height="224" class="h-full w-full object-cover" onerror="this.onerror=null;this.src='/static/images/product-placeholder.svg'"/>
+				</a>
+
+				<div class="flex min-w-0 flex-1 flex-col">
+					<div class="flex items-start justify-between gap-3">
+						<div class="min-w-0">
+							if item.CategoryName != "" {
+								<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700">{ item.CategoryName }</p>
+							}
+							<h2 class="mt-0.5 truncate text-base font-semibold text-slate-950">
+								<a href={ templ.URL(item.URL()) } class="transition hover:text-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">{ item.Name }</a>
+							</h2>
+							<div class="mt-1 flex flex-wrap items-baseline gap-2">
+								<span class="text-sm font-bold text-slate-950">{ service.FormatMoney(item.UnitPrice) }</span>
+								if item.HasDiscount() {
+									<span class="text-xs text-slate-400 line-through">{ service.FormatMoney(item.OriginalPrice) }</span>
+								}
+							</div>
+						</div>
+						<button type="button" hx-delete={ cartItemPath(item.ProductID) } hx-target="#cart-feedback" hx-swap="innerHTML" hx-confirm="Remove this item from your cart?" hx-indicator="#htmx-indicator" class="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500" aria-label={ "Remove " + item.Name }>
+							<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12M9 7V5h6v2M8 7l.7 12h6.6L16 7M10 11v4M14 11v4"/>
+							</svg>
+						</button>
+					</div>
+
+					if !item.Available {
+						<p class="mt-2 inline-flex w-fit items-center rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">No longer available — please remove</p>
+					} else {
+						<div class="mt-auto flex flex-wrap items-end justify-between gap-3 pt-3">
+							<div class="inline-flex items-center rounded-xl border border-slate-300 bg-white shadow-sm">
+								if item.Quantity <= 1 {
+									<button type="button" hx-delete={ cartItemPath(item.ProductID) } hx-target="#cart-feedback" hx-swap="innerHTML" hx-confirm="Remove this item from your cart?" hx-indicator="#htmx-indicator" class="rounded-l-xl px-3 py-2 text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" aria-label="Remove item">−</button>
+								} else {
+									<button type="button" hx-patch={ cartItemPath(item.ProductID) } hx-vals={ cartQuantityVals(item.Quantity - 1) } hx-target="#cart-feedback" hx-swap="innerHTML" hx-indicator="#htmx-indicator" class="rounded-l-xl px-3 py-2 text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" aria-label="Decrease quantity">−</button>
+								}
+								<input type="number" name="quantity" value={ strconv.Itoa(item.Quantity) } min="1" max={ strconv.Itoa(service.MaxCartQuantity) } hx-patch={ cartItemPath(item.ProductID) } hx-trigger="change" hx-target="#cart-feedback" hx-swap="innerHTML" hx-indicator="#htmx-indicator" class="w-12 border-x border-slate-300 bg-white px-1 py-2 text-center text-sm font-semibold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-inset" aria-label={ "Quantity for " + item.Name }/>
+								if item.StockTracked && item.Quantity >= item.Stock {
+									<button type="button" disabled class="cursor-not-allowed rounded-r-xl px-3 py-2 text-slate-300" aria-label="Increase quantity">+</button>
+								} else {
+									<button type="button" hx-patch={ cartItemPath(item.ProductID) } hx-vals={ cartQuantityVals(item.Quantity + 1) } hx-target="#cart-feedback" hx-swap="innerHTML" hx-indicator="#htmx-indicator" class="rounded-r-xl px-3 py-2 text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" aria-label="Increase quantity">+</button>
+								}
+							</div>
+
+							<div class="text-right">
+								<p class="text-sm font-bold text-slate-950">{ service.FormatMoney(item.LineTotal) }</p>
+								if item.StockWarning {
+									<p class="mt-1 text-xs font-semibold text-amber-700">Only { strconv.Itoa(item.Stock) } currently available</p>
+								} else if item.Shipping > 0 {
+									<p class="mt-1 text-xs text-slate-500">+ { service.FormatMoney(item.Shipping) } shipping</p>
+								}
+							</div>
+						</div>
+					}
+				</div>
+			</article>
+		}
+	}
+}
+
+// CartSummary renders the server-calculated totals. It can be swapped
+// independently of the line list.
+templ CartSummary(cart service.CartView, oob bool) {
+	if oob {
+		<div id="cart-summary" hx-swap-oob="outerHTML" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+			@cartSummaryBody(cart)
+		</div>
+	} else {
+		<div id="cart-summary" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+			@cartSummaryBody(cart)
+		</div>
+	}
+}
+
+templ cartSummaryBody(cart service.CartView) {
+	<h2 class="text-base font-bold text-slate-950">Order summary</h2>
+	<dl class="mt-4 space-y-3 text-sm">
+		<div class="flex items-center justify-between gap-3">
+			<dt class="text-slate-600">Subtotal</dt>
+			<dd class="font-semibold text-slate-950">{ service.FormatMoney(cart.Subtotal) }</dd>
+		</div>
+		<div class="flex items-center justify-between gap-3">
+			<dt class="text-slate-600">Shipping</dt>
+			<dd class="font-semibold text-slate-950">{ service.FormatMoney(cart.Shipping) }</dd>
+		</div>
+		if cart.Tax > 0 {
+			<div class="flex items-center justify-between gap-3">
+				<dt class="text-slate-500">Tax (informational)</dt>
+				<dd class="font-medium text-slate-600">{ service.FormatMoney(cart.Tax) }</dd>
+			</div>
+		}
+		<div class="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
+			<dt class="text-base font-bold text-slate-950">Estimated total</dt>
+			<dd class="text-lg font-extrabold tracking-tight text-slate-950">{ service.FormatMoney(cart.Total) }</dd>
+		</div>
+	</dl>
+
+	if cart.HasUnavailable() {
+		<p class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium leading-5 text-rose-700">Remove unavailable items to continue. They are excluded from the totals.</p>
+	}
+	if cart.HasStockWarning() {
+		<p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-800">Some quantities exceed current stock and will be checked again by the order service.</p>
+	}
+	<p class="mt-4 text-xs leading-5 text-slate-500">Prices and totals are recalculated from the catalogue on every request. Final taxes and shipping are confirmed when an order is placed.</p>
+	<a href="/products" class="mt-5 inline-flex w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">Continue shopping</a>
+}

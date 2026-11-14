@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -723,5 +726,76 @@ func TestOversellingIsPreventedThroughHTTP(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("expected one order, got %d", n)
+	}
+}
+
+func TestStorefrontRoutesCoexistWithUploadsAndGlobalCSRF(t *testing.T) {
+	env := newTestEnv(t)
+	env.insertProduct("p1", 100, 5)
+	if _, err := env.db.Exec(`UPDATE "Product" SET slug = 'silver-ring', name = 'Silver Ring' WHERE id = 'p1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	var sessionCookie, csrfCookie *http.Cookie
+	bootstrap := httptest.NewRequest(http.MethodGet, "/", nil)
+	bootstrapRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(bootstrapRec, bootstrap)
+	if bootstrapRec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status = %d", bootstrapRec.Code)
+	}
+	if !strings.Contains(bootstrapRec.Body.String(), "<title>Home · Pusti Shangar</title>") {
+		t.Fatal("storefront was not rendered by the global router")
+	}
+	for _, cookie := range bootstrapRec.Result().Cookies() {
+		switch cookie.Name {
+		case "storefront_session":
+			sessionCookie = cookie
+		case "csrf_token":
+			csrfCookie = cookie
+		}
+	}
+	if sessionCookie == nil || csrfCookie == nil {
+		t.Fatal("storefront bootstrap did not issue session and CSRF cookies")
+	}
+
+	// The outer /products/* upload alias must not shadow the Templ detail
+	// route registered afterwards by web.RegisterWebRoutes.
+	detail := httptest.NewRequest(http.MethodGet, "/products/silver-ring", nil)
+	detailRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(detailRec, detail)
+	if detailRec.Code != http.StatusOK || !strings.Contains(detailRec.Body.String(), "Silver Ring") {
+		t.Fatalf("detail status = %d, body = %q", detailRec.Code, detailRec.Body.String())
+	}
+
+	imageDir := filepath.Join(env.cfg.UploadsDir, "Products")
+	if err := os.MkdirAll(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "silver-ring.jpg"), []byte("image-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	image := httptest.NewRequest(http.MethodGet, "/products/silver-ring.jpg", nil)
+	imageRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(imageRec, image)
+	if imageRec.Code != http.StatusOK || imageRec.Body.String() != "image-bytes" {
+		t.Fatalf("image status = %d, body = %q", imageRec.Code, imageRec.Body.String())
+	}
+
+	// No token cookie exists, so the global CSRF middleware skips this guest
+	// request; the storefront double-submit check still has to accept it.
+	form := url.Values{"productId": {"p1"}, "quantity": {"2"}}
+	add := httptest.NewRequest(http.MethodPost, "/cart/items", strings.NewReader(form.Encode()))
+	add.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	add.Header.Set("HX-Request", "true")
+	add.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	add.AddCookie(sessionCookie)
+	add.AddCookie(csrfCookie)
+	addRec := httptest.NewRecorder()
+	env.handler.ServeHTTP(addRec, add)
+	if addRec.Code != http.StatusOK {
+		t.Fatalf("cart add status = %d, body = %q", addRec.Code, addRec.Body.String())
+	}
+	if !strings.Contains(addRec.Body.String(), "Added") || !strings.Contains(addRec.Body.String(), "₹200.00") {
+		t.Fatalf("unexpected cart fragment: %q", addRec.Body.String())
 	}
 }

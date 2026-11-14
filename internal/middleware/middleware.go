@@ -210,9 +210,9 @@ func CSRF(allowedOrigins []string, mode string) func(http.Handler) http.Handler 
 			}
 			if mode == "strict" || crossOrigin {
 				cookie, err := r.Cookie("csrf_token")
-				header := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
-				if err != nil || cookie.Value == "" || header == "" ||
-					subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
+				provided := csrfTokenFromRequest(r)
+				if err != nil || cookie.Value == "" || provided == "" ||
+					subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(provided)) != 1 {
 					response.FailStatus(w, http.StatusForbidden, "Invalid or missing CSRF token")
 					return
 				}
@@ -220,6 +220,27 @@ func CSRF(allowedOrigins []string, mode string) func(http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// csrfTokenFromRequest accepts the HTMX/API header or, for ordinary HTML
+// forms, the same token in a form field. Parsing is limited to form content
+// types so JSON API bodies remain untouched for the handler.
+func csrfTokenFromRequest(r *http.Request) string {
+	if header := strings.TrimSpace(r.Header.Get("X-CSRF-Token")); header != "" {
+		return header
+	}
+	ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	switch {
+	case strings.HasPrefix(ct, "application/x-www-form-urlencoded"):
+		if err := r.ParseForm(); err == nil {
+			return strings.TrimSpace(r.PostForm.Get("csrf_token"))
+		}
+	case strings.HasPrefix(ct, "multipart/form-data"):
+		if err := r.ParseMultipartForm(1 << 20); err == nil {
+			return strings.TrimSpace(r.FormValue("csrf_token"))
+		}
+	}
+	return ""
 }
 
 func requestOrigin(r *http.Request) string {

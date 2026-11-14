@@ -7,10 +7,20 @@ import (
 
 // Footer is the shared page footer.
 templ Footer() {
-	<footer class="border-t border-slate-200 bg-white">
-		<div class="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-6 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-			<p>© { strconv.Itoa(time.Now().Year()) } Pusti Shangar. Stage 1 foundation.</p>
-			<p>Go · Chi · Templ · HTMX · Tailwind CSS</p>
+	<footer class="mt-12 border-t border-slate-200 bg-white">
+		<div class="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 text-sm text-slate-600 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+			<div>
+				<p class="font-semibold text-slate-950">Pusti Shangar</p>
+				<p class="mt-1 max-w-md leading-6 text-slate-500">Server-rendered storefront powered by Go, Chi, Templ, HTMX and Tailwind CSS.</p>
+			</div>
+			<nav aria-label="Footer navigation">
+				<ul class="flex flex-wrap items-center gap-x-5 gap-y-2">
+					<li><a href="/products" class="rounded font-medium text-slate-600 transition hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">Shop</a></li>
+					<li><a href="/cart" class="rounded font-medium text-slate-600 transition hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">Cart</a></li>
+					<li><a href="/swagger/" class="rounded font-medium text-slate-600 transition hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">API docs</a></li>
+				</ul>
+			</nav>
+			<p class="text-xs text-slate-500">© { strconv.Itoa(time.Now().Year()) } Pusti Shangar</p>
 		</div>
 	</footer>
 }

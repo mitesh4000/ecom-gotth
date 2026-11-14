@@ -14,7 +14,7 @@ import (
 )
 
 // Base is the document shell used by every full page.
-func Base(title string, content templpkg.Component) templ.Component {
+func Base(title string, chrome Chrome, content templpkg.Component) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -35,28 +35,67 @@ func Base(title string, content templpkg.Component) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<!doctype html><html lang=\"en\" class=\"h-full bg-slate-50\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"description\" content=\"Pusti Shangar storefront foundation\"><title>")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<!doctype html><html lang=\"en\" class=\"h-full bg-slate-50\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"description\" content=\"Pusti Shangar — considered clothing and craft for everyday wear.\"><meta name=\"htmx-config\" content=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
-		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(title)
+		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(htmxConfig())
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/layouts/base.templ`, Line: 16, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/layouts/base.templ`, Line: 16, Col: 50}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(" · Pusti Shangar</title><link rel=\"icon\" type=\"image/svg+xml\" href=\"/static/images/logo.svg\"><link rel=\"stylesheet\" href=\"/static/css/app.css\"><script src=\"/static/js/htmx.min.js\" defer></script></head><body class=\"flex min-h-full flex-col bg-slate-50 text-slate-900 antialiased\"><a href=\"#main-content\" class=\"sr-only rounded-md bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50\">Skip to content</a>")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\"><meta name=\"csrf-token\" content=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = components.Navigation().Render(ctx, templ_7745c5c3_Buffer)
+		var templ_7745c5c3_Var3 string
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(chrome.CSRFToken)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/layouts/base.templ`, Line: 17, Col: 53}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<div id=\"htmx-indicator\" class=\"htmx-indicator fixed right-4 top-20 z-50 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-lg\" role=\"status\" aria-live=\"polite\"><span class=\"inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500\" aria-hidden=\"true\"></span> Loading…</div><main id=\"main-content\" class=\"mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6 lg:px-8\">")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\"><title>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var4 string
+		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(title)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/layouts/base.templ`, Line: 18, Col: 17}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(" · Pusti Shangar</title><link rel=\"icon\" type=\"image/svg+xml\" href=\"/static/images/logo.svg\"><link rel=\"stylesheet\" href=\"/static/css/app.css\"><script src=\"/static/js/htmx.min.js\" defer></script></head><body class=\"flex min-h-full flex-col bg-slate-50 text-slate-900 antialiased\" hx-headers=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var5 string
+		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(htmxHeaders(chrome.CSRFToken))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/layouts/base.templ`, Line: 23, Col: 122}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\"><a href=\"#main-content\" class=\"sr-only rounded-md bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50\">Skip to content</a>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = components.Header(chrome.CartCount, chrome.Path).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<div id=\"htmx-indicator\" class=\"htmx-indicator fixed right-4 top-20 z-50 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-lg\" role=\"status\" aria-live=\"polite\"><span class=\"inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500\" aria-hidden=\"true\"></span> Working…</div><div id=\"cart-feedback\" class=\"mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8\" role=\"status\" aria-live=\"polite\"></div><main id=\"main-content\" class=\"mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 lg:px-8\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

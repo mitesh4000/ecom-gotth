@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" role="img" aria-labelledby="title desc">
+  <title id="title">Collection image placeholder</title>
+  <desc id="desc">A neutral illustration shown when a category has no local image.</desc>
+  <rect width="400" height="240" fill="#ECFDF5"/>
+  <circle cx="340" cy="34" r="90" fill="#D1FAE5"/>
+  <circle cx="54" cy="224" r="86" fill="#FEF3C7"/>
+  <g fill="none" stroke="#0F766E" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M200 66c-16 0-28 12-28 28 0 8 3 15 9 20l-47 37c-9 7-4 21 7 21h118c11 0 16-14 7-21l-47-37c6-5 9-12 9-20 0-16-12-28-28-28Z"/>
+    <path d="M200 114v82"/>
+  </g>
+  <rect x="146" y="212" width="108" height="8" rx="4" fill="#0F766E" opacity=".55"/>
+</svg>

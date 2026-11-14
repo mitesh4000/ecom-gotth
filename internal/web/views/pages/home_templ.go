@@ -8,9 +8,24 @@ package pages
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-// Home is a placeholder homepage for Stage 1. It proves the rendering stack
-// works without implementing any real commerce features yet.
-func Home() templ.Component {
+import (
+	"strconv"
+
+	"github.com/mitesh4000/pushti_sangar/server/internal/service"
+	"github.com/mitesh4000/pushti_sangar/server/internal/web/views/components"
+)
+
+// HomeData contains only real rows read from the existing catalogue and CMS
+// tables. Empty slices produce honest empty states rather than demo products.
+type HomeData struct {
+	Banners     []service.StoreBanner
+	Categories  []service.StoreCategory
+	Featured    []service.StoreProduct
+	NewArrivals []service.StoreProduct
+}
+
+// Home is the storefront landing page.
+func Home(data HomeData) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -31,12 +46,217 @@ func Home() templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<section class=\"grid items-start gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]\"><div class=\"rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10\"><span class=\"inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700\"><span class=\"h-2 w-2 rounded-full bg-emerald-500\" aria-hidden=\"true\"></span> Stage 1 foundation</span><h1 class=\"mt-5 max-w-2xl text-4xl font-bold tracking-tight text-slate-950 sm:text-5xl\">Server-rendered commerce, without the JavaScript sprawl.</h1><p class=\"mt-5 max-w-2xl text-lg leading-8 text-slate-600\">The existing Chi API is intact. Templ renders HTML, HTMX handles small interactions, and Tailwind compiles locally — no Node.js required.</p><div class=\"mt-8 flex flex-wrap items-center gap-3\"><a href=\"#htmx-demo\" class=\"inline-flex items-center justify-center rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2\">Try the HTMX demo</a> <a href=\"/swagger/\" class=\"inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2\">Explore the API</a></div></div><aside class=\"rounded-3xl border border-slate-200 bg-slate-900 p-8 text-slate-100 shadow-sm\"><h2 class=\"text-sm font-semibold uppercase tracking-wide text-emerald-300\">What is wired up</h2><ul class=\"mt-5 space-y-4 text-sm leading-6\"><li class=\"flex gap-3\"><span class=\"mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400\" aria-hidden=\"true\"></span> <span><strong class=\"font-semibold text-white\">Chi</strong> keeps serving every existing JSON endpoint.</span></li><li class=\"flex gap-3\"><span class=\"mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400\" aria-hidden=\"true\"></span> <span><strong class=\"font-semibold text-white\">Templ</strong> renders reusable layouts, components and pages.</span></li><li class=\"flex gap-3\"><span class=\"mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400\" aria-hidden=\"true\"></span> <span><strong class=\"font-semibold text-white\">HTMX</strong> is served locally from the embedded binary.</span></li><li class=\"flex gap-3\"><span class=\"mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400\" aria-hidden=\"true\"></span> <span><strong class=\"font-semibold text-white\">Tailwind</strong> is compiled by the standalone CLI.</span></li></ul></aside></section><section id=\"htmx-demo\" class=\"mt-10 rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10\"><div class=\"flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between\"><div class=\"max-w-2xl\"><h2 class=\"text-2xl font-semibold tracking-tight text-slate-950\">HTMX round trip</h2><p class=\"mt-3 text-base leading-7 text-slate-600\">This button sends an <code class=\"rounded bg-slate-100 px-1.5 py-0.5 text-sm font-medium text-slate-800\">HX-Request</code> GET to Go. The handler returns a Templ-rendered fragment, which HTMX swaps into the panel below.</p></div><button type=\"button\" hx-get=\"/fragments/server-message\" hx-target=\"#server-message\" hx-swap=\"innerHTML\" hx-indicator=\"#htmx-indicator\" class=\"inline-flex shrink-0 items-center justify-center rounded-lg bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2\">Load server message</button></div><div id=\"server-message\" class=\"mt-6 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5\" aria-live=\"polite\"><p class=\"text-sm text-slate-500\">No message loaded yet. Click the button to request one from the server.</p></div></section><section class=\"mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3\"><div class=\"rounded-2xl border border-slate-200 bg-white p-6 shadow-sm\"><h2 class=\"text-base font-semibold text-slate-950\">Shared foundation</h2><p class=\"mt-2 text-sm leading-6 text-slate-600\">HTML handlers and JSON handlers use the same database handle, configuration and Chi middleware stack.</p></div><div class=\"rounded-2xl border border-slate-200 bg-white p-6 shadow-sm\"><h2 class=\"text-base font-semibold text-slate-950\">Local assets</h2><p class=\"mt-2 text-sm leading-6 text-slate-600\">Compiled CSS and HTMX are embedded with <code class=\"rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-800\">go:embed</code> and served by Go.</p></div><div class=\"rounded-2xl border border-slate-200 bg-white p-6 shadow-sm\"><h2 class=\"text-base font-semibold text-slate-950\">Ready for Stage 2</h2><p class=\"mt-2 text-sm leading-6 text-slate-600\">The layout, renderer and route registration are reusable for the storefront and admin panel.</p></div></section>")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<section class=\"overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm\"><div class=\"grid lg:grid-cols-[1.05fr_0.95fr]\"><div class=\"flex flex-col justify-center p-7 sm:p-10 lg:p-12\"><p class=\"inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700\"><span class=\"h-1.5 w-1.5 rounded-full bg-emerald-500\" aria-hidden=\"true\"></span> Pusti Shangar</p>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		if len(data.Banners) > 0 {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<h1 class=\"mt-5 max-w-xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var2 string
+			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(bannerHeadline(data.Banners[0]))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 30, Col: 39}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</h1><p class=\"mt-5 max-w-xl text-base leading-7 text-slate-600 sm:text-lg\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var3 string
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(bannerCopy(data.Banners[0]))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 33, Col: 35}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</p>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<h1 class=\"mt-5 max-w-xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl\">Considered pieces for everyday rituals.</h1><p class=\"mt-5 max-w-xl text-base leading-7 text-slate-600 sm:text-lg\">Explore the catalogue as it is published. Every product, price and stock level comes directly from the server.</p>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<div class=\"mt-8 flex flex-wrap items-center gap-3\"><a href=\"/products\" class=\"inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2\">Shop the collection <span aria-hidden=\"true\">→</span></a> <a href=\"/cart\" class=\"inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2\">View cart</a></div><div class=\"mt-8 grid max-w-lg grid-cols-3 gap-3 border-t border-slate-200 pt-6 text-xs text-slate-600\"><div><p class=\"font-bold text-slate-950\">Server-side</p><p class=\"mt-1 leading-5\">Cart and totals</p></div><div><p class=\"font-bold text-slate-950\">Live stock</p><p class=\"mt-1 leading-5\">Resolved per request</p></div><div><p class=\"font-bold text-slate-950\">HTMX</p><p class=\"mt-1 leading-5\">Fast partial updates</p></div></div></div><div class=\"relative min-h-64 overflow-hidden bg-gradient-to-br from-emerald-100 via-amber-50 to-rose-100\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if len(data.Banners) > 0 {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<img src=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var4 string
+			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.Banners[0].Image)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 70, Col: 37}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\" alt=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var5 string
+			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(bannerHeadline(data.Banners[0]))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 70, Col: 77}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\" class=\"h-full min-h-72 w-full object-cover\" onerror=\"this.onerror=null;this.src=&#39;/static/images/banner-placeholder.svg&#39;\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<div class=\"flex h-full min-h-72 flex-col items-center justify-center p-10 text-center\"><img src=\"/static/images/banner-placeholder.svg\" alt=\"\" class=\"h-44 w-auto drop-shadow-sm\" width=\"360\" height=\"240\"><p class=\"mt-6 max-w-xs text-sm font-medium leading-6 text-emerald-950/70\">The collection is being prepared. Published products will appear here automatically.</p></div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</div></div></section>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if len(data.Categories) > 0 {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<section class=\"mt-12\" aria-labelledby=\"collections-heading\"><div class=\"flex flex-wrap items-end justify-between gap-3\"><div><p class=\"text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-700\">Browse</p><h2 id=\"collections-heading\" class=\"mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl\">Collections</h2></div><a href=\"/products\" class=\"rounded-lg text-sm font-semibold text-emerald-700 transition hover:text-emerald-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\">View all products →</a></div><div class=\"mt-5 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			for _, category := range data.Categories {
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<a href=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var6 templ.SafeURL = templ.URL(category.URL())
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(string(templ_7745c5c3_Var6)))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\" class=\"group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\"><div class=\"aspect-[5/3] overflow-hidden bg-slate-100\"><img src=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var7 string
+				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(category.Image)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 94, Col: 32}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("\" alt=\"\" loading=\"lazy\" width=\"400\" height=\"240\" class=\"h-full w-full object-cover transition duration-300 group-hover:scale-105\" onerror=\"this.onerror=null;this.src=&#39;/static/images/category-placeholder.svg&#39;\"></div><div class=\"p-4\"><h3 class=\"text-sm font-bold text-slate-950\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var8 string
+				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(category.Name)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 97, Col: 67}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</h3><p class=\"mt-1 text-xs font-medium text-slate-500\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var9 string
+				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(category.ProductCount))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pages/home.templ`, Line: 98, Col: 95}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(" products</p></div></a>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</div></section>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		if len(data.Featured) > 0 {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<section class=\"mt-12\" aria-labelledby=\"featured-heading\"><div class=\"flex flex-wrap items-end justify-between gap-3\"><div><p class=\"text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-700\">Curated</p><h2 id=\"featured-heading\" class=\"mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl\">Popular right now</h2></div><a href=\"/products?sort=popular\" class=\"rounded-lg text-sm font-semibold text-emerald-700 transition hover:text-emerald-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\">See popular →</a></div><div class=\"mt-5\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = components.ProductGrid(data.Featured).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</div></section>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		if len(data.NewArrivals) > 0 {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<section class=\"mt-12\" aria-labelledby=\"new-heading\"><div class=\"flex flex-wrap items-end justify-between gap-3\"><div><p class=\"text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-700\">Just in</p><h2 id=\"new-heading\" class=\"mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl\">New arrivals</h2></div><a href=\"/products?sort=newest\" class=\"rounded-lg text-sm font-semibold text-emerald-700 transition hover:text-emerald-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\">See newest →</a></div><div class=\"mt-5\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = components.ProductGrid(data.NewArrivals).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</div></section>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		if len(data.Featured) == 0 && len(data.NewArrivals) == 0 {
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<section class=\"mt-12\" aria-labelledby=\"empty-heading\"><h2 id=\"empty-heading\" class=\"sr-only\">Catalogue status</h2>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = components.ProductsEmpty(false).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</section>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
 		return templ_7745c5c3_Err
 	})
+}
+
+func bannerHeadline(banner service.StoreBanner) string {
+	if banner.Title != "" {
+		return banner.Title
+	}
+	if banner.Text != "" {
+		return banner.Text
+	}
+	return "Considered pieces for everyday rituals."
+}
+
+func bannerCopy(banner service.StoreBanner) string {
+	if banner.Description != "" {
+		return banner.Description
+	}
+	return "Explore the catalogue as it is published. Every product, price and stock level comes directly from the server."
 }
 
 var _ = templruntime.GeneratedTemplate

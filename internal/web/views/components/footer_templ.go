@@ -35,20 +35,20 @@ func Footer() templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<footer class=\"border-t border-slate-200 bg-white\"><div class=\"mx-auto flex max-w-6xl flex-col gap-2 px-4 py-6 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8\"><p>© ")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("<footer class=\"mt-12 border-t border-slate-200 bg-white\"><div class=\"mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 text-sm text-slate-600 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8\"><div><p class=\"font-semibold text-slate-950\">Pusti Shangar</p><p class=\"mt-1 max-w-md leading-6 text-slate-500\">Server-rendered storefront powered by Go, Chi, Templ, HTMX and Tailwind CSS.</p></div><nav aria-label=\"Footer navigation\"><ul class=\"flex flex-wrap items-center gap-x-5 gap-y-2\"><li><a href=\"/products\" class=\"rounded font-medium text-slate-600 transition hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\">Shop</a></li><li><a href=\"/cart\" class=\"rounded font-medium text-slate-600 transition hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\">Cart</a></li><li><a href=\"/swagger/\" class=\"rounded font-medium text-slate-600 transition hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500\">API docs</a></li></ul></nav><p class=\"text-xs text-slate-500\">© ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(time.Now().Year()))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/components/footer.templ`, Line: 12, Col: 42}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/components/footer.templ`, Line: 23, Col: 73}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(" Pusti Shangar. Stage 1 foundation.</p><p>Go · Chi · Templ · HTMX · Tailwind CSS</p></div></footer>")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(" Pusti Shangar</p></div></footer>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

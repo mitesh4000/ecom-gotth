@@ -1,33 +1,55 @@
 package components
 
-// Navigation is the shared primary navigation for server-rendered pages.
-templ Navigation() {
-	<header class="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
-		<div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+// Header is the shared storefront masthead. The cart badge is rendered from
+// the server-side count and can be replaced out-of-band after a cart mutation.
+templ Header(cartCount int, currentPath string) {
+	<header class="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+		<div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
 			<a href="/" class="flex items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2" aria-label="Pusti Shangar home">
-				<img src="/static/images/logo.svg" alt="" class="h-9 w-9" width="36" height="36"/>
-				<span class="text-base font-semibold tracking-tight text-slate-900">Pusti Shangar</span>
+				<img src="/static/images/logo.svg" alt="" class="h-10 w-10" width="40" height="40"/>
+				<span class="flex flex-col leading-tight">
+					<span class="text-base font-bold tracking-tight text-slate-950">Pusti Shangar</span>
+					<span class="hidden text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 sm:block">Craft for every day</span>
+				</span>
 			</a>
 
 			<nav aria-label="Primary navigation">
-				<ul class="flex flex-wrap items-center gap-1 text-sm font-medium text-slate-600">
+				<ul class="flex items-center gap-1">
 					<li>
-						<a href="/" class="rounded-md px-3 py-2 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
+						<a href="/" class={ navLinkClass(currentPath, "/") } aria-current={ navAria(currentPath, "/") }>
 							Home
 						</a>
 					</li>
 					<li>
-						<a href="/health" class="rounded-md px-3 py-2 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
-							Health
+						<a href="/products" class={ navLinkClass(currentPath, "/products") } aria-current={ navAria(currentPath, "/products") }>
+							Shop
 						</a>
 					</li>
 					<li>
-						<a href="/swagger/" class="rounded-md px-3 py-2 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
-							API Docs
+						<a href="/cart" class={ navLinkClass(currentPath, "/cart") } aria-current={ navAria(currentPath, "/cart") }>
+							<span class="flex items-center gap-2">
+								<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.6L21 7H6.2"/>
+									<circle cx="10" cy="20" r="1.2"/>
+									<circle cx="18" cy="20" r="1.2"/>
+								</svg>
+								<span class="hidden sm:inline">Cart</span>
+								@CartBadge(cartCount, false)
+							</span>
 						</a>
 					</li>
 				</ul>
 			</nav>
 		</div>
 	</header>
+}
+
+// CartBadge is the navigation count. When oob is true it is returned as an
+// out-of-band swap so an add/update/remove refreshes the header immediately.
+templ CartBadge(count int, oob bool) {
+	if oob {
+		<span id="cart-badge" hx-swap-oob="outerHTML" class={ cartBadgeClass(count) }>{ cartBadgeText(count) }</span>
+	} else {
+		<span id="cart-badge" class={ cartBadgeClass(count) }>{ cartBadgeText(count) }</span>
+	}
 }

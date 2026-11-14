@@ -1,0 +1,41 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/mitesh4000/pushti_sangar/server/internal/service"
+	"github.com/mitesh4000/pushti_sangar/server/internal/web/views/components"
+)
+
+// Cart is the full server-rendered cart page. Every mutation is handled by a
+// dedicated POST/PATCH/PUT/DELETE endpoint and refreshes the line list,
+// summary and header badge through HTMX.
+templ Cart(cart service.CartView) {
+	<header class="flex flex-wrap items-end justify-between gap-4">
+		<div>
+			<p class="text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-700">Your selection</p>
+			<h1 class="mt-1 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Cart</h1>
+			<p class="mt-2 text-sm leading-6 text-slate-600">
+				if cart.Empty() {
+					Nothing here yet.
+				} else {
+					{ strconv.Itoa(cart.LineCount) } lines · { strconv.Itoa(cart.ItemCount) } items
+				}
+			</p>
+		</div>
+		<a href="/products" class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">Continue shopping</a>
+	</header>
+
+	<div class="mt-7 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+		<section aria-label="Cart items">
+			@components.CartItems(cart, false)
+		</section>
+		<aside aria-label="Order summary">
+			@components.CartSummary(cart, false)
+			<div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
+				<p class="font-semibold text-slate-800">Stored on the server</p>
+				<p class="mt-1">Your cart belongs to this browser session. Prices and stock are never trusted from the browser; they are recalculated whenever this page or a cart action is requested.</p>
+			</div>
+		</aside>
+	</div>
+}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,9 +15,8 @@ import (
 	"github.com/mitesh4000/pushti_sangar/server/internal/middleware"
 	"github.com/mitesh4000/pushti_sangar/server/internal/models"
 	"github.com/mitesh4000/pushti_sangar/server/internal/response"
+	"github.com/mitesh4000/pushti_sangar/server/internal/service"
 )
-
-const maxCartQuantity = 1000
 
 func (a *API) serializeCustomer(id string, withCart bool) map[string]any {
 	var username, email, address, paymentMethods, preferences string
@@ -504,29 +504,6 @@ func (a *API) DeleteCustomer(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, map[string]any{"success": true, "message": "Successfully Deleted"})
 }
 
-// availableStock returns the tracked quantity for a product and whether stock
-// is tracked at all. Stock table rows win; otherwise Product.stockQuantity is
-// used. Untracked products report tracked=false.
-func (a *API) availableStock(productID string) (quantity int, tracked bool) {
-	var stockRows int
-	if err := a.DB.QueryRow(`SELECT COUNT(1) FROM "Stock" WHERE productId = ?`, productID).Scan(&stockRows); err != nil {
-		return 0, false
-	}
-	if stockRows > 0 {
-		var sum sql.NullInt64
-		_ = a.DB.QueryRow(`SELECT SUM(quantity) FROM "Stock" WHERE productId = ?`, productID).Scan(&sum)
-		return int(sum.Int64), true
-	}
-	var stockQuantity sql.NullInt64
-	if err := a.DB.QueryRow(`SELECT stockQuantity FROM "Product" WHERE id = ?`, productID).Scan(&stockQuantity); err != nil {
-		return 0, false
-	}
-	if !stockQuantity.Valid {
-		return 0, false
-	}
-	return int(stockQuantity.Int64), true
-}
-
 func (a *API) AddToCart(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "id")
 	if !a.canAccessCustomer(r, customerID) {
@@ -536,62 +513,35 @@ func (a *API) AddToCart(w http.ResponseWriter, r *http.Request) {
 	body, _ := a.decodeBody(r)
 	productID := strings.TrimSpace(str(body, "productId"))
 	qty := intVal(body, "quantity", 1)
-	if productID == "" || qty <= 0 || qty > maxCartQuantity {
+	if productID == "" || qty <= 0 || qty > service.MaxCartQuantity {
 		response.Fail(w, "Please provide a valid product and quantity")
 		return
 	}
 
-	var exists int
-	if err := a.DB.QueryRow(`SELECT COUNT(1) FROM "Customer" WHERE id = ? AND deleted = 0`, customerID).Scan(&exists); err != nil || exists == 0 {
+	err := service.NewCart(a.DB).Add(r.Context(), service.CartOwner{CustomerID: customerID}, productID, qty)
+	switch {
+	case err == nil:
+	case errors.Is(err, service.ErrCustomerNotFound):
 		response.FailStatus(w, http.StatusNotFound, "Customer not found")
 		return
-	}
-	var gstID sql.NullString
-	var active int
-	if err := a.DB.QueryRow(`SELECT gstId, isActive FROM "Product" WHERE id = ?`, productID).Scan(&gstID, &active); err != nil {
+	case errors.Is(err, service.ErrCartProductNotFound):
 		response.FailStatus(w, http.StatusNotFound, "Product not found")
 		return
-	}
-	if active == 0 {
+	case errors.Is(err, service.ErrProductUnavailable):
 		response.Fail(w, "Product is not available")
 		return
-	}
-
-	var cartID string
-	var curQty int
-	err := a.DB.QueryRow(`SELECT id, quantity FROM "CartItem" WHERE customerId = ? AND productId = ?`, customerID, productID).
-		Scan(&cartID, &curQty)
-	newQty := qty
-	if err == nil {
-		newQty = curQty + qty
-	}
-	if newQty > maxCartQuantity {
+	case errors.Is(err, service.ErrCartQuantityLimit):
 		response.Fail(w, "Quantity limit exceeded")
 		return
-	}
-	if available, tracked := a.availableStock(productID); tracked && newQty > available {
+	case errors.Is(err, service.ErrInsufficientStock):
 		response.Fail(w, "Not enough stock available")
 		return
-	}
-
-	if err == nil {
-		if _, err := a.DB.Exec(`UPDATE "CartItem" SET quantity = ? WHERE id = ?`, newQty, cartID); err != nil {
-			response.FailErr(w, err)
-			return
-		}
-	} else {
-		var tax any
-		if gstID.Valid {
-			var g float64
-			if a.DB.QueryRow(`SELECT gst FROM "Gst" WHERE id = ?`, gstID.String).Scan(&g) == nil {
-				tax = g
-			}
-		}
-		if _, err := a.DB.Exec(`INSERT INTO "CartItem" (id, customerId, productId, quantity, tax) VALUES (?, ?, ?, ?, ?)`,
-			models.NewID(), customerID, productID, newQty, tax); err != nil {
-			response.FailErr(w, err)
-			return
-		}
+	case errors.Is(err, service.ErrInvalidQuantity):
+		response.Fail(w, "Please provide a valid product and quantity")
+		return
+	default:
+		response.FailErr(w, err)
+		return
 	}
 	response.OK(w, map[string]any{
 		"success": true, "msg": "Cart updated successfully",
@@ -636,7 +586,10 @@ func (a *API) RemoveFromCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := a.requestInput(r)
-	_, _ = a.DB.Exec(`DELETE FROM "CartItem" WHERE customerId = ? AND productId = ?`, customerID, str(body, "productId"))
+	if err := service.NewCart(a.DB).Remove(r.Context(), service.CartOwner{CustomerID: customerID}, str(body, "productId")); err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	response.OK(w, map[string]any{
 		"success": true, "msg": "Product removed from the cart successfully",
 		"updatedCart": a.serializeCustomer(customerID, true),

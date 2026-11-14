@@ -11,6 +11,7 @@ import (
 	"github.com/mitesh4000/pushti_sangar/server/internal/config"
 	"github.com/mitesh4000/pushti_sangar/server/internal/web/handlers"
 	"github.com/mitesh4000/pushti_sangar/server/internal/web/render"
+	"github.com/mitesh4000/pushti_sangar/server/internal/web/session"
 	staticassets "github.com/mitesh4000/pushti_sangar/server/static"
 )
 
@@ -34,10 +35,36 @@ func RegisterWebRoutes(r chi.Router, deps WebDependencies) {
 
 	h := webhandlers.New(deps.DB, deps.Cfg, renderer)
 
-	r.Get("/", h.Home)
-	r.Get("/health", h.Health)
-	r.Get("/fragments/server-message", h.ServerMessage)
+	secureCookies := false
+	jwtSecret := ""
+	if deps.Cfg != nil {
+		secureCookies = deps.Cfg.CookieSecure
+		jwtSecret = deps.Cfg.JWTSecret
+	}
+	sessions := session.New(deps.DB, jwtSecret, secureCookies)
+
+	// Static assets and liveness do not need session cookies.
 	r.Handle("/static/*", cacheStatic(http.StripPrefix("/static/", http.FileServer(http.FS(staticassets.FS)))))
+	r.Get("/health", h.Health)
+
+	r.Group(func(r chi.Router) {
+		r.Use(sessions.Session)
+
+		r.Get("/", h.Home)
+		r.Get("/products", h.Products)
+		r.Get("/products/", h.Products)
+		r.Get("/products/{slug}", h.Product)
+		r.Get("/cart", h.CartPage)
+		r.Get("/cart/", h.CartPage)
+		r.Get("/fragments/server-message", h.ServerMessage)
+
+		// Cart writes use the correct HTTP verb and a web-specific
+		// double-submit check. HX-Request is never an authentication signal.
+		r.With(sessions.ProtectCSRF).Post("/cart/items", h.AddCartItem)
+		r.With(sessions.ProtectCSRF).Patch("/cart/items/{productID}", h.UpdateCartItem)
+		r.With(sessions.ProtectCSRF).Put("/cart/items/{productID}", h.UpdateCartItem)
+		r.With(sessions.ProtectCSRF).Delete("/cart/items/{productID}", h.RemoveCartItem)
+	})
 }
 
 func cacheStatic(next http.Handler) http.Handler {

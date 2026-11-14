@@ -2,9 +2,9 @@
 
 Go backend for the Pushti Shangar storefront and admin panel. The existing Chi
 JSON API remains the contract used by the React `client` and `adminpanel`; the
-Templ/HTMX presentation layer added in Stage 1 is additive. The hardening pass
-described in [`AUDIT.md`](AUDIT.md) keeps every existing route and preserves
-existing SQLite data.
+Templ/HTMX storefront added in Stage 2 is additive. The hardening pass described
+in [`AUDIT.md`](AUDIT.md) keeps every existing route and preserves existing
+SQLite data.
 
 ## Stack
 
@@ -33,13 +33,18 @@ internal/
   middleware/                   # request ID, logging, recovery, CORS, auth, roles, limits
   upload/                       # signature-validated image saves
   response/                     # JSON helpers + `_id`/`id` dual fields
-  service/                      # transactional checkout, cancellation, payments
+  service/                      # catalogue views, carts, checkout, payments
   handlers/                     # JSON API handlers + route registration
   docs/                         # OpenAPI 3 spec + embedded Swagger UI
-  web/                          # Stage 1 HTML/HTMX layer
+  web/                          # Stage 2 server-rendered storefront
+    handlers/                   # home, catalogue, detail and cart HTTP handlers
+    render/                     # page/fragment/error/redirect rendering
+    session/                    # guest cookie, CSRF, optional customer session
+    views/                      # Templ layouts, components and pages
 migrations/
   001_init.sql                  # original schema
   002_hardening.sql             # additive hardening (idempotency, soft delete, snapshots)
+  003_storefront.sql            # product slugs, catalogue indexes, guest carts
   embed.go                      # embeds migrations for single-binary deploys
 styles/input.css                # Tailwind source
 static/                         # generated CSS, local HTMX, embedded images
@@ -53,10 +58,12 @@ cp .env.example .env
 make build
 ./bin/seed
 ./bin/server
-# App:     http://localhost:5000
-# Liveness: http://localhost:5000/healthz
-# Readiness:http://localhost:5000/readyz
-# API docs: http://localhost:5000/swagger
+# Storefront: http://localhost:5000/
+# Catalogue:  http://localhost:5000/products
+# Cart:       http://localhost:5000/cart
+# Liveness:   http://localhost:5000/healthz
+# Readiness:  http://localhost:5000/readyz
+# API docs:   http://localhost:5000/swagger
 ```
 
 `make build` installs the pinned Templ/Tailwind tools into `.tools/`, generates
@@ -166,9 +173,12 @@ closed with HTTP 503. Client-supplied payment status is never trusted.
 ## Database
 
 Migrations are embedded and applied in filename order, recorded in
-`schema_migrations`. `001_init.sql` adopts the original schema idempotently and
-`002_hardening.sql` only adds columns/tables/indexes — no existing table is
-recreated or dropped.
+`schema_migrations`. `001_init.sql` adopts the original schema idempotently,
+`002_hardening.sql` adds order/snapshot hardening, and `003_storefront.sql`
+adds the nullable unique product slug, catalogue indexes and `GuestCartItem`.
+All later migrations are additive — no existing table is recreated or dropped.
+Signed-in customer carts continue to live in `CartItem`; only guests use
+`GuestCartItem`.
 
 SQLite runs in WAL mode with a 5 second busy timeout and immediate write
 transactions. This is reliable for a single server instance and moderate
@@ -233,14 +243,72 @@ Query-string tokens are intentionally no longer accepted. New tokens include
 | `/uploads/*` | Static files |
 | `/healthz`, `/readyz` | Liveness / readiness probes |
 
-## Server-rendered web layer
+## Storefront (Stage 2)
 
 `internal/handlers.API.Routes()` owns all existing API routes and calls
-`web.RegisterWebRoutes` once, which adds the Stage 1 HTML pages, HTMX fragment,
-and embedded static assets. `internal/web/render` provides page, fragment,
-validation-error, error, and redirect helpers. `HX-Request` is a transport hint,
-**not** an authentication signal; protected handlers still run the auth
-middleware.
+`web.RegisterWebRoutes` once. The storefront is server-rendered with Go, Chi,
+Templ, HTMX and Tailwind; there is no React/Node build in this layer. The page
+handlers call the service/data layer and never duplicate catalogue or cart
+business logic in HTML.
+
+| Route | Purpose |
+|---|---|
+| `GET /` | Homepage: banner, categories, popular products, new arrivals, honest empty states |
+| `GET /products` | Product listing with `q`, `category`, `sort`, `page`, `limit` |
+| `GET /products/{slug}` | Product detail; accepts a slug or the product id |
+| `GET /cart` | Full server-rendered cart |
+| `POST /cart/items` | Add a line (`productId`, `quantity`) |
+| `PATCH` / `PUT /cart/items/{productID}` | Set a line quantity |
+| `DELETE /cart/items/{productID}` | Remove a line |
+| `GET /fragments/server-message` | Small HTMX demonstration fragment |
+| `GET /static/*` | Embedded CSS, local HTMX, logo and placeholder images |
+
+Listing, search, filtering, sorting and pagination are always applied in SQL.
+HTMX requests receive only the results region, while a normal browser gets the
+full document, so links still work without a client-side router. Cart add,
+update and remove responses swap `#cart-feedback` and update `#cart-badge`,
+`#cart-items` and `#cart-summary` out-of-band.
+
+### Cart ownership and CSRF
+
+- Signed-in customers keep using the existing `CartItem` table. The storefront
+  reads the same customer JWT cookie as the JSON API and never introduces a
+  second login or registration UI.
+- Guests receive an opaque, `HttpOnly`, `SameSite=Lax` `storefront_session`
+  cookie. Only its SHA-256 hash is stored, as `GuestCartItem.sessionId`.
+  Cart rows are always selected and mutated by the server-resolved owner, so a
+  browser cannot read or edit another guest's or customer's cart by changing a
+  URL or form field.
+- Product ids and quantities are the only cart inputs accepted. Unit prices,
+  shipping, tax and totals are recalculated from the database on every request,
+  and stock is checked again inside the transaction. `Product.stockQuantity` is
+  used when no `Stock` rows exist, matching checkout.
+- Unsafe cart methods require the existing double-submit `csrf_token` cookie.
+  HTMX sends it in `X-CSRF-Token`; ordinary forms may post the same value as a
+  `csrf_token` field. `HX-Request` is only a rendering hint and is never treated
+  as authentication.
+- Validation failures return meaningful 4xx statuses (403 CSRF/owner, 404
+  missing product/line, 409 stock/unavailable, 422 quantity) and an HTMX-safe
+  error fragment. Successful non-HTMX form submissions redirect to `/cart`.
+
+`internal/web/render` provides page, fragment, validation-error, error and
+redirect helpers, and marks every HTML response `no-store` because pages embed
+a per-session CSRF token. `internal/web/session` issues and reads the guest and
+CSRF cookies; it does not replace the API's JWT middleware.
+
+### Storefront data rules
+
+- The catalogue comes from the existing `Product`, `Category`, `Stock`, `Gst`
+  and `Banner` tables. No demo products or invented prices are rendered.
+- Only active, non-variant products with a positive price appear in listings.
+  Inactive or unpriced cart lines remain visible as unavailable so they can be
+  removed, but they do not contribute to totals.
+- Stored image paths are normalised to local `/uploads/...` URLs. Missing,
+  unsafe or non-image values fall back to bundled SVG placeholders, and image
+  load errors use the same local fallback. User uploads are never embedded.
+- `003_storefront.sql` adds a nullable unique `Product.slug` and catalogue
+  indexes. Existing rows receive their id as a slug; new rows without a slug
+  remain addressable by id.
 
 ## API documentation (Swagger)
 
@@ -298,7 +366,11 @@ The suite uses temporary SQLite databases and real migrations. It covers:
 - HTTP integration: auth status modes, registration privilege injection,
   self/other ownership, role checks, cart stock limits, order ownership and
   totals, admin cancellation, soft delete, health probes, 404s, and error
-  message sanitisation.
+  message sanitisation;
+- storefront pages and HTMX fragments: catalogue filtering/sorting/pagination,
+  slug and id detail routes, empty states, missing images, guest cart ownership,
+  CSRF rejection, server-side repricing, stock limits, customer `CartItem`
+  reuse, cross-cart isolation, and correct 4xx/redirect responses.
 
 `go build ./...`, `go vet ./...`, and `go test -race ./...` pass in this
 repository. Docker was not built in the audit environment because Docker is not
@@ -320,5 +392,12 @@ installed there.
 - Banner/color static mounts use `/banner-images` and `/color-images` because
   chi cannot mount a file server on the same path as an API route group. Files
   are also available under `/uploads/Banner` and `/uploads/Color`.
+- Guest carts are not merged into a customer cart when that customer signs in.
+  Guest rows are also not proactively deleted when the session cookie expires;
+  schedule a cleanup job if long-term retention matters. Cart actions are HTMX
+  interactions; the JSON cart API remains available for existing clients.
+- New products created through the existing JSON API keep a `NULL` slug and are
+  addressed by id until a slug is set. The storefront does not guess slugs from
+  names because slugs must stay unique and stable.
 - The `.env` file is intentionally untracked. Keep real secrets out of version
   control and set `JWT_SECRET` explicitly in production.

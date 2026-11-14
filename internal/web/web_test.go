@@ -54,9 +54,11 @@ func TestHomePageRendersFullDocument(t *testing.T) {
 		"<title>Home · Pusti Shangar</title>",
 		"/static/css/app.css",
 		"/static/js/htmx.min.js",
-		"hx-get=\"/fragments/server-message\"",
-		"id=\"server-message\"",
+		"name=\"htmx-config\"",
+		"name=\"csrf-token\"",
+		"id=\"cart-badge\"",
 		"Pusti Shangar",
+		"Shop the collection",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("homepage is missing %q", want)
